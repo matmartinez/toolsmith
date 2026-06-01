@@ -7,13 +7,28 @@ import NIO
 /// paths `/sse` + `/messages`. Each `--named-server` entry is mounted
 /// under `/servers/<name>/sse` + `/servers/<name>/messages`.
 public actor ServerModeProxy {
+    /// How a named server's traffic is satisfied. Existing entries
+    /// (positional command, --named-server, --named-server-config)
+    /// resolve to `.stdioChild`, which spawns a child MCP server via
+    /// `ChildSession`. The new `--cli-tools-config` resolves to
+    /// `.cliExposure`, served by an in-process `CLIBackend` that shells
+    /// out per `tools/call`.
+    public enum BackendKind: Sendable {
+        case stdioChild(executable: URL, args: [String], env: [String: String]?, cwd: URL?)
+        case cliExposure(CLIExposureConfig)
+    }
+
     public struct NamedServer: Sendable {
         public let name: String  // empty == default, mounted at root
-        public let executable: URL
-        public let args: [String]
-        public let env: [String: String]?
-        public let cwd: URL?
+        public let backend: BackendKind
 
+        public init(name: String, backend: BackendKind) {
+            self.name = name
+            self.backend = backend
+        }
+
+        /// Convenience for stdio entries — keeps the older call sites
+        /// (tests, CLI plumbing) ergonomic.
         public init(
             name: String,
             executable: URL,
@@ -21,11 +36,7 @@ public actor ServerModeProxy {
             env: [String: String]? = nil,
             cwd: URL? = nil
         ) {
-            self.name = name
-            self.executable = executable
-            self.args = args
-            self.env = env
-            self.cwd = cwd
+            self.init(name: name, backend: .stdioChild(executable: executable, args: args, env: env, cwd: cwd))
         }
     }
 
@@ -40,7 +51,7 @@ public actor ServerModeProxy {
     public let version: String
     public let cors: CORSConfig?
 
-    private var children: [ChildSession] = []
+    private var backends: [any MCPServerBackend] = []
     private var httpServer: HTTPServer?
     public let activity = ActivityTracker()
 
@@ -65,33 +76,34 @@ public actor ServerModeProxy {
         self.cors = cors
     }
 
-    /// Spawn every server, register their routes, and bind the HTTP
+    /// Construct every backend, register its routes, and bind the HTTP
     /// listener. Returns the resolved local address.
     public func start() async throws -> SocketAddress {
         var router = ServerRouter()
         for spec in servers {
-            let child = ChildSession(
-                executable: spec.executable,
-                args: spec.args,
-                env: spec.env,
-                cwd: spec.cwd
-            )
-            try await child.start()
+            let backend: any MCPServerBackend
+            switch spec.backend {
+            case let .stdioChild(executable, args, env, cwd):
+                backend = ChildSession(executable: executable, args: args, env: env, cwd: cwd)
+            case .cliExposure:
+                preconditionFailure("CLIBackend not yet implemented; arrives in the next commit")
+            }
+            try await backend.start()
             let prefix = spec.name.isEmpty ? "" : "/servers/\(spec.name)"
             ServerModeRoutes.register(
                 on: &router,
-                child: child,
+                backend: backend,
                 ssePath: prefix + "/sse",
                 postPath: prefix + "/messages",
                 activity: activity
             )
             StreamableHTTPRoutes.register(
                 on: &router,
-                child: child,
+                backend: backend,
                 path: prefix + "/mcp",
                 activity: activity
             )
-            children.append(child)
+            backends.append(backend)
         }
         StatusRoute.register(
             on: &router,
@@ -109,7 +121,7 @@ public actor ServerModeProxy {
     public func stop() async {
         try? await httpServer?.stop()
         httpServer = nil
-        for child in children { await child.stop() }
-        children.removeAll()
+        for backend in backends { await backend.stop() }
+        backends.removeAll()
     }
 }

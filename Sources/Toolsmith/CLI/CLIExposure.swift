@@ -1,5 +1,14 @@
 import Foundation
 
+/// Placeholder for the per-named-server CLI-exposure config. The
+/// concrete fields (executable / cwd / env / tools) land in the next
+/// commit alongside CLIToolSpec and the on-disk loader; defining the
+/// type now lets `ServerModeProxy.BackendKind.cliExposure(_:)`
+/// reference it.
+public struct CLIExposureConfig: Hashable, Sendable {
+    public init() {}
+}
+
 /// One token in a CLI tool's argv spec. Each variant maps a slot in
 /// the projected argv to either a literal string or a value drawn from
 /// the inbound MCP `tools/call` arguments.

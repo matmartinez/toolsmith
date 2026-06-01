@@ -190,7 +190,14 @@ struct Toolsmith: AsyncParsableCommand {
             : CORSConfig(allowedOrigins: allowOrigin, exposedHeaders: exposeHeader)
         for spec in specs {
             let label = spec.name.isEmpty ? "(default)" : spec.name
-            Logger.shared.info("setting up server '\(label)': \(spec.args.joined(separator: " "))")
+            let summary: String
+            switch spec.backend {
+            case let .stdioChild(_, args, _, _):
+                summary = args.joined(separator: " ")
+            case .cliExposure:
+                summary = "<cli-tools exposure>"
+            }
+            Logger.shared.info("setting up server '\(label)': \(summary)")
         }
         let proxy = try ServerModeProxy(host: host, port: port, servers: specs, cors: cors)
         let address = try await proxy.start()

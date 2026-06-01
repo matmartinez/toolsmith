@@ -15,14 +15,14 @@ import NIOHTTP1
 public enum ServerModeRoutes {
     public static func register(
         on router: inout ServerRouter,
-        child: ChildSession,
+        backend: any MCPServerBackend,
         ssePath: String = "/sse",
         postPath: String = "/messages",
         activity: ActivityTracker? = nil
     ) {
         router.register(.GET, ssePath) { _ in
             await activity?.touch()
-            let (subscriberId, subscription) = await child.subscribe()
+            let (subscriberId, subscription) = await backend.subscribe()
             let endpointEvent = Data("event: endpoint\ndata: \(postPath)\n\n".utf8)
 
             let bodyStream = AsyncThrowingStream<Data, Error> { continuation in
@@ -41,7 +41,7 @@ public enum ServerModeRoutes {
                 }
                 continuation.onTermination = { _ in
                     task.cancel()
-                    Task { await child.unsubscribe(subscriberId) }
+                    Task { await backend.unsubscribe(subscriberId) }
                 }
             }
 
@@ -67,7 +67,7 @@ public enum ServerModeRoutes {
                     body: .data(Data("malformed JSON-RPC body".utf8))
                 )
             }
-            try await child.send(message)
+            try await backend.send(message)
             return ServerHTTPResponse(status: .accepted)
         }
     }

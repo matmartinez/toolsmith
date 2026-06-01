@@ -92,10 +92,13 @@ struct ServerConfigLoaderTests {
             defaultEnv: ["FOO": "from-cli", "CLI_ONLY": "v"],
             cwd: nil
         )
-        let env = specs[0].env ?? [:]
-        #expect(env["FOO"] == "from-config")  // per-entry wins
-        #expect(env["EXTRA"] == "config-only")
-        #expect(env["CLI_ONLY"] == "v")
+        guard case let .stdioChild(_, _, env, _) = specs[0].backend else {
+            Issue.record("expected stdioChild backend"); return
+        }
+        let dict = env ?? [:]
+        #expect(dict["FOO"] == "from-config")  // per-entry wins
+        #expect(dict["EXTRA"] == "config-only")
+        #expect(dict["CLI_ONLY"] == "v")
     }
 
     @Test("specs builds /usr/bin/env args = [command, args...]")
@@ -109,7 +112,10 @@ struct ServerConfigLoaderTests {
             defaultEnv: nil,
             cwd: nil
         )
-        #expect(specs[0].args == ["uvx", "mcp-server-fetch", "--port=8080"])
+        guard case let .stdioChild(_, args, _, _) = specs[0].backend else {
+            Issue.record("expected stdioChild backend"); return
+        }
+        #expect(args == ["uvx", "mcp-server-fetch", "--port=8080"])
     }
 
     @Test("Missing file throws fileNotFound")

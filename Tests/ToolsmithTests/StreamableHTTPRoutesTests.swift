@@ -47,7 +47,7 @@ struct StreamableHTTPRoutesTests {
         defer { Task { await child.stop() } }
 
         var router = ServerRouter()
-        StreamableHTTPRoutes.register(on: &router, child: child)
+        StreamableHTTPRoutes.register(on: &router, backend: child)
         let server = HTTPServer(router: router)
         let address = try await server.start(host: "127.0.0.1", port: 0)
         defer { Task { try? await server.stop() } }
@@ -75,7 +75,7 @@ struct StreamableHTTPRoutesTests {
         defer { Task { await child.stop() } }
 
         var router = ServerRouter()
-        StreamableHTTPRoutes.register(on: &router, child: child)
+        StreamableHTTPRoutes.register(on: &router, backend: child)
         let server = HTTPServer(router: router)
         let address = try await server.start(host: "127.0.0.1", port: 0)
         defer { Task { try? await server.stop() } }
@@ -102,7 +102,7 @@ struct StreamableHTTPRoutesTests {
         defer { Task { await child.stop() } }
 
         var router = ServerRouter()
-        StreamableHTTPRoutes.register(on: &router, child: child)
+        StreamableHTTPRoutes.register(on: &router, backend: child)
         let server = HTTPServer(router: router)
         let address = try await server.start(host: "127.0.0.1", port: 0)
         defer { Task { try? await server.stop() } }
@@ -146,7 +146,7 @@ struct StreamableHTTPRoutesTests {
         defer { Task { await child.stop() } }
 
         var router = ServerRouter()
-        StreamableHTTPRoutes.register(on: &router, child: child)
+        StreamableHTTPRoutes.register(on: &router, backend: child)
         let server = HTTPServer(router: router)
         let address = try await server.start(host: "127.0.0.1", port: 0)
         defer { Task { try? await server.stop() } }
@@ -170,7 +170,7 @@ struct StreamableHTTPRoutesTests {
         defer { Task { await child.stop() } }
 
         var router = ServerRouter()
-        StreamableHTTPRoutes.register(on: &router, child: child)
+        StreamableHTTPRoutes.register(on: &router, backend: child)
         let server = HTTPServer(router: router)
         let address = try await server.start(host: "127.0.0.1", port: 0)
         defer { Task { try? await server.stop() } }

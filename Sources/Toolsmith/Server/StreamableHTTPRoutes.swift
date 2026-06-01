@@ -16,7 +16,7 @@ import NIOHTTP1
 public enum StreamableHTTPRoutes {
     public static func register(
         on router: inout ServerRouter,
-        child: ChildSession,
+        backend: any MCPServerBackend,
         path: String = "/mcp",
         activity: ActivityTracker? = nil
     ) {
@@ -35,7 +35,7 @@ public enum StreamableHTTPRoutes {
 
             switch message {
             case .notification:
-                try await child.send(message)
+                try await backend.send(message)
                 return ServerHTTPResponse(status: .accepted)
 
             case .response:
@@ -46,8 +46,8 @@ public enum StreamableHTTPRoutes {
                 )
 
             case .request(let request):
-                let (subscriberId, subscription) = await child.subscribe()
-                try await child.send(message)
+                let (subscriberId, subscription) = await backend.subscribe()
+                try await backend.send(message)
 
                 let body = AsyncThrowingStream<Data, Error> { continuation in
                     // SSE comment chunk to flush headers to the client
@@ -73,7 +73,7 @@ public enum StreamableHTTPRoutes {
                     }
                     continuation.onTermination = { _ in
                         task.cancel()
-                        Task { await child.unsubscribe(subscriberId) }
+                        Task { await backend.unsubscribe(subscriberId) }
                     }
                 }
 
@@ -90,7 +90,7 @@ public enum StreamableHTTPRoutes {
 
         router.register(.GET, path) { _ in
             await activity?.touch()
-            let (subscriberId, subscription) = await child.subscribe()
+            let (subscriberId, subscription) = await backend.subscribe()
             let body = AsyncThrowingStream<Data, Error> { continuation in
                 // SSE comment chunk to flush headers (see POST handler).
                 continuation.yield(Data(": stream-open\n\n".utf8))
@@ -108,7 +108,7 @@ public enum StreamableHTTPRoutes {
                 }
                 continuation.onTermination = { _ in
                     task.cancel()
-                    Task { await child.unsubscribe(subscriberId) }
+                    Task { await backend.unsubscribe(subscriberId) }
                 }
             }
             return ServerHTTPResponse(

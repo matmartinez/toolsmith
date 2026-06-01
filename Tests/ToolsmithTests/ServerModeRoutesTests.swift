@@ -13,7 +13,7 @@ struct ServerModeRoutesTests {
         try await child.start()
 
         var router = ServerRouter()
-        ServerModeRoutes.register(on: &router, child: child)
+        ServerModeRoutes.register(on: &router, backend: child)
 
         let server = HTTPServer(router: router)
         let address = try await server.start(host: "127.0.0.1", port: 0)
@@ -75,7 +75,7 @@ struct ServerModeRoutesTests {
         try await child.start()
 
         var router = ServerRouter()
-        ServerModeRoutes.register(on: &router, child: child)
+        ServerModeRoutes.register(on: &router, backend: child)
         let server = HTTPServer(router: router)
         let address = try await server.start(host: "127.0.0.1", port: 0)
         defer {
