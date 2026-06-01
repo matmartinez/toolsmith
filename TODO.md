@@ -21,7 +21,7 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 - [x] **Server mode**: `ChildSession` spawns one child per server, broadcasts its messages to subscribers; `ServerModeProxy` orchestrates one HTTPServer + N children with `/sse`+`/messages` and named-server routes. Signal-driven shutdown.
 - [x] `--named-server-config` JSON loader matching upstream's `mcpServers` schema. `enabled:false` filtered, per-entry env layered on top of CLI `--env`, deterministic alphabetic mount order.
 - [x] `--pass-environment`, `--cwd`, `--env` plumbing through `Process`.
-- [ ] Logging with levels per `--log-level` / `--debug`.
+- [x] Logging: synchronous lock-guarded `Logger` to stderr with ISO-8601 timestamps, level filtering driven by `--log-level` / `--debug`, log points across run(), ChildSession lifecycle, and the client-mode auth + transport selection.
 
 ## Phase 3 — Test parity with upstream
 
