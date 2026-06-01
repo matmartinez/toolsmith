@@ -37,11 +37,13 @@ public actor ServerModeProxy {
     public let host: String
     public let port: Int
     public let servers: [NamedServer]
+    public let version: String
 
     private var children: [ChildSession] = []
     private var httpServer: HTTPServer?
+    public let activity = ActivityTracker()
 
-    public init(host: String, port: Int, servers: [NamedServer]) throws {
+    public init(host: String, port: Int, servers: [NamedServer], version: String = "0.0.0") throws {
         guard !servers.isEmpty else { throw Failure.noServers }
         var seen = Set<String>()
         for spec in servers {
@@ -52,6 +54,7 @@ public actor ServerModeProxy {
         self.host = host
         self.port = port
         self.servers = servers
+        self.version = version
     }
 
     /// Spawn every server, register their routes, and bind the HTTP
@@ -71,10 +74,17 @@ public actor ServerModeProxy {
                 on: &router,
                 child: child,
                 ssePath: prefix + "/sse",
-                postPath: prefix + "/messages"
+                postPath: prefix + "/messages",
+                activity: activity
             )
             children.append(child)
         }
+        StatusRoute.register(
+            on: &router,
+            serverNames: servers.map(\.name),
+            activity: activity,
+            version: version
+        )
         let httpServer = HTTPServer(router: router)
         let address = try await httpServer.start(host: host, port: port)
         self.httpServer = httpServer
