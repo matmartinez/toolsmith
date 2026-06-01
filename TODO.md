@@ -25,10 +25,10 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 
 ## Phase 3 — Test parity with upstream
 
-- [ ] Port `test_config_loader.py` → `ConfigLoaderTests`
-- [ ] Port `test_mcp_server.py` → `HTTPServerTests`
-- [ ] Port `test_proxy_server.py` → `ProxyServerTests`
-- [ ] Port `test_progress_forwarding.py` → `ProgressForwardingTests`
+- [x] Port `test_config_loader.py` parity cases into `ServerConfigLoaderTests` (empty mcpServers, missing top-level key, empty file/JSON object, invalid entry shapes, mixed enabled states)
+- [x] Port `test_mcp_server.py` SSE + streamable transport parity → `MCPServerTransportParityTests` (initialize + list_prompts over /sse, 3× tools/call echo over /mcp)
+- [x] Port `test_proxy_server.py` method round-trip parity → `MCPProxyMethodParityTests` (10 methods: initialize, resources/*, prompts/get, completion/complete, logging/setLevel, tools/call with isError, method-not-found error)
+- [x] Port `test_progress_forwarding.py` → `ProgressForwardingParityTests` (progress over /mcp + /sse, no-token case, MCPProgressTokenExtractor parity)
 
 ## Phase 4 — Future (not part of the mcp-proxy port)
 
