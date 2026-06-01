@@ -127,4 +127,96 @@ struct ServerConfigLoaderTests {
             _ = try ServerConfigLoader.load(contentsOfFile: path)
         }
     }
+
+    // MARK: - Parity with upstream tests/test_config_loader.py
+
+    @Test("Empty mcpServers dict loads zero specs (upstream: test_empty_mcpservers_dict)")
+    func emptyMCPServers() throws {
+        let path = try writeTempFile(#"{ "mcpServers": {} }"#)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let config = try ServerConfigLoader.load(contentsOfFile: path)
+        let specs = ServerConfigLoader.specs(
+            from: config,
+            executable: URL(fileURLWithPath: "/usr/bin/env"),
+            defaultEnv: nil,
+            cwd: nil
+        )
+        #expect(specs.isEmpty)
+    }
+
+    @Test("Missing mcpServers key fails decode (upstream: test_invalid_config_format_missing_mcpservers)")
+    func missingMCPServersKey() throws {
+        let path = try writeTempFile(#"{"some_other_key":"value"}"#)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        #expect(throws: (any Error).self) {
+            _ = try ServerConfigLoader.load(contentsOfFile: path)
+        }
+    }
+
+    @Test("Empty JSON object {} fails decode (upstream: test_config_file_is_empty_json_object)")
+    func emptyJSONObject() throws {
+        let path = try writeTempFile("{}")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        #expect(throws: (any Error).self) {
+            _ = try ServerConfigLoader.load(contentsOfFile: path)
+        }
+    }
+
+    @Test("Empty file fails decode (upstream: test_config_file_is_empty_string)")
+    func emptyFile() throws {
+        let path = try writeTempFile("")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        #expect(throws: (any Error).self) {
+            _ = try ServerConfigLoader.load(contentsOfFile: path)
+        }
+    }
+
+    @Test("Server entry that is not an object fails decode (upstream: test_invalid_server_entry_not_dict)")
+    func entryNotAnObject() throws {
+        let path = try writeTempFile(#"{"mcpServers":{"server1":"not_a_dict"}}"#)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        #expect(throws: (any Error).self) {
+            _ = try ServerConfigLoader.load(contentsOfFile: path)
+        }
+    }
+
+    @Test("Server entry missing command fails decode (upstream: test_server_entry_missing_command)")
+    func entryMissingCommand() throws {
+        let path = try writeTempFile(#"{"mcpServers":{"x":{"args":["a"]}}}"#)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        #expect(throws: (any Error).self) {
+            _ = try ServerConfigLoader.load(contentsOfFile: path)
+        }
+    }
+
+    @Test("Server entry with args that is not an array fails decode (upstream: test_server_entry_invalid_args_type)")
+    func entryArgsNotAnArray() throws {
+        let path = try writeTempFile(#"{"mcpServers":{"x":{"command":"c","args":"not_a_list"}}}"#)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        #expect(throws: (any Error).self) {
+            _ = try ServerConfigLoader.load(contentsOfFile: path)
+        }
+    }
+
+    @Test("Mixed enabled/implicit-enabled/disabled (upstream: test_load_config_with_not_enabled_server)")
+    func mixedEnabledStates() throws {
+        let path = try writeTempFile("""
+        {
+          "mcpServers": {
+            "explicit": {"command": "a", "enabled": true},
+            "implicit": {"command": "b"},
+            "disabled": {"command": "c", "enabled": false}
+          }
+        }
+        """)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let config = try ServerConfigLoader.load(contentsOfFile: path)
+        let specs = ServerConfigLoader.specs(
+            from: config,
+            executable: URL(fileURLWithPath: "/usr/bin/env"),
+            defaultEnv: nil,
+            cwd: nil
+        )
+        #expect(specs.map(\.name) == ["explicit", "implicit"])
+    }
 }
