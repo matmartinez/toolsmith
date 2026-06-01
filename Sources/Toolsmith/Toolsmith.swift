@@ -23,9 +23,9 @@ struct Toolsmith: AsyncParsableCommand {
     // MARK: Client-mode options
 
     @Option(
-        name: [.customShort("H"), .customLong("headers")],
-        parsing: .upToNextOption,
-        help: ArgumentHelp("Custom request headers. Repeat for multiple.", valueName: "KEY VALUE")
+        name: [.customShort("H"), .customLong("header")],
+        parsing: .singleValue,
+        help: ArgumentHelp(#"Custom request header, e.g. "Authorization: Bearer x". Repeat for multiple."#, valueName: "NAME: VALUE")
     )
     var headers: [String] = []
 
@@ -51,8 +51,8 @@ struct Toolsmith: AsyncParsableCommand {
 
     @Option(
         name: [.short, .customLong("env")],
-        parsing: .upToNextOption,
-        help: ArgumentHelp("Environment variable for the spawned server. Repeat for multiple.", valueName: "KEY VALUE")
+        parsing: .singleValue,
+        help: ArgumentHelp("Environment variable for the spawned server, KEY=VALUE. Repeat for multiple.", valueName: "KEY=VALUE")
     )
     var env: [String] = []
 
@@ -70,8 +70,8 @@ struct Toolsmith: AsyncParsableCommand {
 
     @Option(
         name: .customLong("named-server"),
-        parsing: .upToNextOption,
-        help: ArgumentHelp("Define a named server, exposed at /servers/<NAME>/. Repeat for multiple.", valueName: "NAME COMMAND")
+        parsing: .singleValue,
+        help: ArgumentHelp("Named server exposed at /servers/<NAME>/, in NAME=COMMAND form. Repeat for multiple.", valueName: "NAME=COMMAND")
     )
     var namedServer: [String] = []
 
@@ -116,14 +116,14 @@ struct Toolsmith: AsyncParsableCommand {
             commandOrUrl = ProcessInfo.processInfo.environment["SSE_URL"]
         }
 
-        if headers.count % 2 != 0 {
-            throw ValidationError("--headers expects KEY VALUE pairs; got an odd number of values.")
+        for header in headers where !header.contains(":") {
+            throw ValidationError(#"--header value "\#(header)" must be in "NAME: VALUE" form."#)
         }
-        if env.count % 2 != 0 {
-            throw ValidationError("--env expects KEY VALUE pairs; got an odd number of values.")
+        for entry in env where !entry.contains("=") {
+            throw ValidationError(#"--env value "\#(entry)" must be in "KEY=VALUE" form."#)
         }
-        if namedServer.count % 2 != 0 {
-            throw ValidationError("--named-server expects NAME COMMAND pairs; got an odd number of values.")
+        for entry in namedServer where !entry.contains("=") {
+            throw ValidationError(#"--named-server value "\#(entry)" must be in "NAME=COMMAND" form."#)
         }
 
         let hasDefaultServer = commandOrUrl != nil
