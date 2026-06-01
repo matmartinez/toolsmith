@@ -85,6 +85,12 @@ public actor ServerModeProxy {
                 postPath: prefix + "/messages",
                 activity: activity
             )
+            StreamableHTTPRoutes.register(
+                on: &router,
+                child: child,
+                path: prefix + "/mcp",
+                activity: activity
+            )
             children.append(child)
         }
         StatusRoute.register(
