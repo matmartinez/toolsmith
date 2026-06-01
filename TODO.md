@@ -30,14 +30,17 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 - [x] Port `test_proxy_server.py` method round-trip parity → `MCPProxyMethodParityTests` (10 methods: initialize, resources/*, prompts/get, completion/complete, logging/setLevel, tools/call with isError, method-not-found error)
 - [x] Port `test_progress_forwarding.py` → `ProgressForwardingParityTests` (progress over /mcp + /sse, no-token case, MCPProgressTokenExtractor parity)
 
-## Phase 4 — Future (not part of the mcp-proxy port)
+## Phase 4 — CLI-as-MCP-server
 
-- [ ] **CLI-as-MCP-server**: a new mode that wraps an arbitrary host executable as an MCP tool, so any CLI on the host becomes discoverable via MCP. Sketch:
-  - Shape: `toolsmith expose <command> [--manifest path.json]` (or a top-level `--expose-cli` flag, TBD).
-  - A manifest (JSON or TOML) declares the tool's MCP name, description, JSON-schema for arguments, and how to project the MCP `tools/call` arguments onto argv + stdin.
-  - Tool result: exit code, stdout, and stderr returned to the MCP client.
-  - Auto-generated manifests from `--help` parsing are a stretch goal.
-  - Design doc lands before code.
+- [x] **CLI-as-MCP-server**: separate `--cli-tools-config <path>` config file declares host executables and the MCP tools they expose. Each `tools/call` runs a one-shot subprocess via `CLIRunner`; stdout → `TextContent`; non-zero exit → `isError: true` with stderr. Argv encoded as discriminated tagged objects (`literal`, `argument`, `optionalArgument`, `flag`, `booleanFlag`). `CLIBackend` actor implements `MCPServerBackend` in-process so the existing routes serve it untouched. Sample at `samples/cli-tools.json`. Mixed-backend integration test in place.
+
+## Future (deferred)
+
+- [ ] stdin piping into the CLI subprocess from a `tools/call` argument (a new `ArgvSpec` variant or a top-level `stdin: { fromArgument: "..." }` field).
+- [ ] Auto-generated CLI manifests from `--help` parsing.
+- [ ] Output schemas / `structuredContent` on `MCPCallToolResult`.
+- [ ] Per-tool resource limits (timeouts, max bytes captured).
+- [ ] A `toolsmith expose <command>` one-shot subcommand without a config file.
 
 ## Notes
 
