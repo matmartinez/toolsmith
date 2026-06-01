@@ -16,7 +16,7 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 
 ## Phase 2 — Proxy core
 
-- [ ] **Client mode**: read JSON-RPC from our stdin, forward to the remote HTTP transport, stream responses back to stdout. Progress-token plumbing.
+- [x] **Client mode**: `ClientModeProxy` pumps stdin↔remote.send and remote.incoming↔stdout in a TaskGroup. Wired into `Toolsmith.run()` with both SSE and streamable-HTTP transports + OAuth + API_ACCESS_TOKEN env fallback. End-to-end test against the real HTTPServer.
 - [ ] **Server mode**: spawn child stdio process(es) per `--named-server` / positional command, expose them via `HTTPServer`. Activity tracker for `/status`.
 - [ ] `--named-server-config` JSON loader matching upstream's `mcpServers` schema. Accept `timeout`/`transportType` fields but ignore them for now (parity).
 - [ ] `--pass-environment`, `--cwd`, `--env` plumbing through `Process`.
