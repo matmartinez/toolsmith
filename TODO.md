@@ -9,7 +9,7 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 - [x] `StdioTransport`: line-delimited JSON over `FileHandle`/`Pipe`. Drives both the child process (server mode) and our own stdin/stdout (client mode).
 - [x] HTTP client abstraction (`HTTPClient` protocol) with URLSession-backed implementation; TLS-toggle via per-session delegate
 - [x] `SSEClientTransport` — MCP SSE flow: GET stream, endpoint event, POST messages back, custom headers forwarded on both directions
-- [ ] OAuth2 client-credentials token flow on top of `HTTPClient` (port `httpx-auth` behavior)
+- [x] OAuth2 client-credentials token flow + composable `BearerTokenHTTPClient` decorator
 - [ ] `StreamableHTTPClientTransport`: POST request with chunked streaming response per the MCP streamable-HTTP spec.
 - [ ] `HTTPServer` on NIO: routes for `/status`, `/sse`, `/messages/`, `/mcp`, and `/servers/<name>/{sse,mcp}`. CORS via `--allow-origin` / `--expose-header`. Stateless mode for `/mcp`.
 
