@@ -172,3 +172,25 @@ struct ToolsmithHeaderParsingTests {
         }
     }
 }
+
+@Suite("Toolsmith env parsing")
+struct ToolsmithEnvParsingTests {
+    @Test("Parses KEY=VALUE pairs")
+    func basicParse() throws {
+        let parsed = try Toolsmith.parseEnvPairs(["FOO=bar", "BAZ=qux"])
+        #expect(parsed == ["FOO": "bar", "BAZ": "qux"])
+    }
+
+    @Test("Values may contain '='")
+    func valueWithEquals() throws {
+        let parsed = try Toolsmith.parseEnvPairs(["URL=https://x?y=1&z=2"])
+        #expect(parsed["URL"] == "https://x?y=1&z=2")
+    }
+
+    @Test("Missing '=' throws ValidationError")
+    func malformed() {
+        #expect(throws: (any Error).self) {
+            _ = try Toolsmith.parseEnvPairs(["NO_EQUALS"])
+        }
+    }
+}

@@ -142,9 +142,83 @@ struct Toolsmith: AsyncParsableCommand {
         case .client:
             try await runClientMode()
         case .server:
-            FileHandle.standardError.write(Data("toolsmith: server mode not implemented yet\n".utf8))
-            throw ExitCode.failure
+            try await runServerMode()
         }
+    }
+
+    private func runServerMode() async throws {
+        guard let command = commandOrUrl else {
+            throw ValidationError("server mode needs a command to spawn")
+        }
+
+        let envDict = try Self.parseEnvPairs(env)
+        let environment: [String: String]?
+        if passEnvironment {
+            var merged = ProcessInfo.processInfo.environment
+            for (key, value) in envDict { merged[key] = value }
+            environment = merged
+        } else if !envDict.isEmpty {
+            environment = envDict
+        } else {
+            environment = nil
+        }
+
+        let workingDirectory = cwd.map { URL(fileURLWithPath: $0) }
+
+        let child = ChildSession.usingPATH(
+            command: command,
+            args: args,
+            env: environment,
+            cwd: workingDirectory
+        )
+        try await child.start()
+
+        var router = ServerRouter()
+        ServerModeRoutes.register(on: &router, child: child)
+        let server = HTTPServer(router: router)
+        let address = try await server.start(host: host, port: port)
+
+        FileHandle.standardError.write(
+            Data("toolsmith: listening on http://\(host):\(address.port ?? port)\n".utf8)
+        )
+
+        await Self.waitForTerminationSignal()
+        try? await server.stop()
+        await child.stop()
+    }
+
+    static func parseEnvPairs(_ raw: [String]) throws -> [String: String] {
+        var dict: [String: String] = [:]
+        for entry in raw {
+            guard let equals = entry.firstIndex(of: "=") else {
+                throw ValidationError(#"malformed --env "\#(entry)"; expected "KEY=VALUE""#)
+            }
+            let key = String(entry[..<equals])
+            let value = String(entry[entry.index(after: equals)...])
+            dict[key] = value
+        }
+        return dict
+    }
+
+    /// Suspends until the process receives SIGINT or SIGTERM. We
+    /// install dispatch-source-backed handlers so the existing default
+    /// disposition (process exit) is suppressed and we can shut the
+    /// HTTP server + child down cleanly before returning.
+    private static func waitForTerminationSignal() async {
+        let stream = AsyncStream<Int32> { continuation in
+            let queue = DispatchQueue(label: "toolsmith.signal")
+            let sources: [DispatchSourceSignal] = [SIGINT, SIGTERM].map { sig in
+                let source = DispatchSource.makeSignalSource(signal: sig, queue: queue)
+                source.setEventHandler { continuation.yield(sig) }
+                source.resume()
+                signal(sig, SIG_IGN)
+                return source
+            }
+            continuation.onTermination = { _ in
+                for source in sources { source.cancel() }
+            }
+        }
+        for await _ in stream { break }
     }
 
     private func runClientMode() async throws {
