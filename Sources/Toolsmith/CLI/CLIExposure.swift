@@ -1,12 +1,52 @@
 import Foundation
 
-/// Placeholder for the per-named-server CLI-exposure config. The
-/// concrete fields (executable / cwd / env / tools) land in the next
-/// commit alongside CLIToolSpec and the on-disk loader; defining the
-/// type now lets `ServerModeProxy.BackendKind.cliExposure(_:)`
-/// reference it.
-public struct CLIExposureConfig: Hashable, Sendable {
-    public init() {}
+/// Per-named-server CLI-exposure config. Carries the executable that
+/// every tool in this server resolves through, optional cwd + env
+/// applied to each invocation, and the list of tools advertised to
+/// MCP clients via `tools/list`.
+public struct CLIExposureConfig: Codable, Hashable, Sendable {
+    public var executable: String
+    public var cwd: String?
+    public var env: [String: String]?
+    public var tools: [CLIToolSpec]
+
+    public init(
+        executable: String,
+        tools: [CLIToolSpec],
+        cwd: String? = nil,
+        env: [String: String]? = nil
+    ) {
+        self.executable = executable
+        self.cwd = cwd
+        self.env = env
+        self.tools = tools
+    }
+}
+
+/// One MCP tool exposed by a CLI server. The tool's `name`,
+/// `description`, and `inputSchema` flow into the `tools/list`
+/// response verbatim; the `argv` projection turns the inbound
+/// `tools/call` arguments into a concrete subprocess invocation.
+public struct CLIToolSpec: Codable, Hashable, Sendable {
+    public var name: String
+    public var title: String?
+    public var description: String?
+    public var inputSchema: JSONValue
+    public var argv: [ArgvSpec]
+
+    public init(
+        name: String,
+        inputSchema: JSONValue,
+        argv: [ArgvSpec],
+        title: String? = nil,
+        description: String? = nil
+    ) {
+        self.name = name
+        self.title = title
+        self.description = description
+        self.inputSchema = inputSchema
+        self.argv = argv
+    }
 }
 
 /// One token in a CLI tool's argv spec. Each variant maps a slot in
