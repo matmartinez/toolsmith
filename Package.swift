@@ -22,5 +22,9 @@ let package = Package(
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ]
         ),
+        .testTarget(
+            name: "ToolsmithTests",
+            dependencies: ["Toolsmith"]
+        ),
     ]
 )
