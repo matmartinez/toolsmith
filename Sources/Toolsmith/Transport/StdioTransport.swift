@@ -20,9 +20,7 @@ public actor StdioTransport {
     public init(input: FileHandle, output: FileHandle) {
         self.input = input
         self.output = output
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.withoutEscapingSlashes]
-        self.encoder = encoder
+        self.encoder = WireJSON.encoder()
     }
 
     /// Encode `message` as a single newline-terminated JSON object and
@@ -40,7 +38,7 @@ public actor StdioTransport {
         let input = self.input
         return AsyncThrowingStream { continuation in
             let task = Task {
-                let decoder = JSONDecoder()
+                let decoder = WireJSON.decoder()
                 do {
                     for try await line in input.bytes.lines {
                         if line.isEmpty { continue }
