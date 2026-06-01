@@ -12,14 +12,15 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 - [x] OAuth2 client-credentials token flow + composable `BearerTokenHTTPClient` decorator
 - [x] `StreamableHTTPClientTransport`: POST request with JSON / 202 / SSE response paths per the MCP streamable-HTTP spec.
 - [x] NIO HTTP/1.1 server scaffold + `ServerRouter` (registers method/path → handler, 404/405 split). Streaming response support via chunked transfer-encoding.
-- [ ] MCP server-side routes on top of the scaffold: `/status`, `/sse`, `/messages/`, `/mcp`, `/servers/<name>/{sse,mcp}`. CORS via `--allow-origin` / `--expose-header`. Stateless mode for `/mcp`.
+- [x] MCP SSE server-side routes: `/sse` + `/messages` (default), `/servers/<name>/{sse,messages}` per named server, `/status` with activity tracker, CORS via `--allow-origin` / `--expose-header` including OPTIONS preflight
+- [ ] `/mcp` streamable-HTTP server route (with session tracking + per-request response routing). Stateless mode toggle.
 
 ## Phase 2 — Proxy core
 
 - [x] **Client mode**: `ClientModeProxy` pumps stdin↔remote.send and remote.incoming↔stdout in a TaskGroup. Wired into `Toolsmith.run()` with both SSE and streamable-HTTP transports + OAuth + API_ACCESS_TOKEN env fallback. End-to-end test against the real HTTPServer.
-- [ ] **Server mode**: spawn child stdio process(es) per `--named-server` / positional command, expose them via `HTTPServer`. Activity tracker for `/status`.
-- [ ] `--named-server-config` JSON loader matching upstream's `mcpServers` schema. Accept `timeout`/`transportType` fields but ignore them for now (parity).
-- [ ] `--pass-environment`, `--cwd`, `--env` plumbing through `Process`.
+- [x] **Server mode**: `ChildSession` spawns one child per server, broadcasts its messages to subscribers; `ServerModeProxy` orchestrates one HTTPServer + N children with `/sse`+`/messages` and named-server routes. Signal-driven shutdown.
+- [x] `--named-server-config` JSON loader matching upstream's `mcpServers` schema. `enabled:false` filtered, per-entry env layered on top of CLI `--env`, deterministic alphabetic mount order.
+- [x] `--pass-environment`, `--cwd`, `--env` plumbing through `Process`.
 - [ ] Logging with levels per `--log-level` / `--debug`.
 
 ## Phase 3 — Test parity with upstream
