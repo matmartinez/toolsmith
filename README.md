@@ -126,6 +126,11 @@ Argv tokens are tagged objects, one variant per kind:
 
 A full `samples/cli-tools.json` is checked into the repo.
 
+**Env merging**: the per-server `env` block is layered on top of the
+parent process's environment — host CLIs almost always need `PATH`,
+`HOME`, etc. to function. Use `env` for overrides and additions; the
+caller's environment flows through automatically.
+
 ## Build / Run / Test
 
 ```sh

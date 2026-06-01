@@ -157,6 +157,43 @@ struct CLIBackendTests {
         #expect(response.error?.message.contains("nonexistent/method") == true)
     }
 
+    @Test("Per-server env is layered on top of the parent env, not a wholesale replacement")
+    func envMerging() async throws {
+        // /bin/sh exists at an absolute path so we don't rely on PATH
+        // resolution for the shell itself. The inline script reads two
+        // env vars: TOOLSMITH_OVERRIDE (set by exposure.env) and PATH
+        // (inherited from the parent unless we replaced the whole env).
+        let exposure = CLIExposureConfig(
+            executable: "/bin/sh",
+            tools: [
+                CLIToolSpec(
+                    name: "probe",
+                    inputSchema: ["type": "object"],
+                    argv: [
+                        .literal("-c"),
+                        .literal(#"echo override=$TOOLSMITH_OVERRIDE path-empty=$(test -z "$PATH" && echo yes || echo no)"#),
+                    ]
+                ),
+            ],
+            env: ["TOOLSMITH_OVERRIDE": "ok"]
+        )
+        let backend = CLIBackend(exposure: exposure)
+        let response = try await awaitResponse(
+            from: backend,
+            requestId: 1,
+            method: mcpCallToolMethod,
+            params: ["name": "probe", "arguments": .object([:])]
+        )
+        let result = try decode(MCPCallToolResult.self, from: response.result ?? .null)
+        guard case .text(let text) = result.content[0] else {
+            Issue.record("expected text content"); return
+        }
+        #expect(text.text.contains("override=ok"))
+        // PATH must still be present from the parent env even though
+        // we set exposure.env — that's the whole point of this fix.
+        #expect(text.text.contains("path-empty=no"))
+    }
+
     @Test("Custom serverInfo flows through initialize")
     func customServerInfo() async throws {
         let backend = CLIBackend(

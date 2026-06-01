@@ -124,13 +124,28 @@ public actor CLIBackend: MCPServerBackend {
 
         Logger.shared.debug("invoking \(exposure.executable) \(argv.joined(separator: " "))")
 
+        // Merge parent env underneath the per-server overrides. Host
+        // CLIs almost always need PATH/HOME/USER from the parent —
+        // passing the per-server `env` block alone (the way Foundation
+        // Process treats a non-nil env) would isolate the child and
+        // break common cases like `things add`, which needs `open` on
+        // PATH to fire its URL scheme.
+        let effectiveEnv: [String: String]?
+        if let overrides = exposure.env {
+            var merged = ProcessInfo.processInfo.environment
+            for (key, value) in overrides { merged[key] = value }
+            effectiveEnv = merged
+        } else {
+            effectiveEnv = nil  // nil ⇒ Process inherits parent env wholesale
+        }
+
         // Run the CLI.
         let result: CLIInvocationResult
         do {
             result = try await runCLI(
                 executable: URL(fileURLWithPath: exposure.executable),
                 args: argv,
-                env: exposure.env,
+                env: effectiveEnv,
                 cwd: exposure.cwd.map { URL(fileURLWithPath: $0) }
             )
         } catch {
