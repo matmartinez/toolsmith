@@ -11,7 +11,8 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 - [x] `SSEClientTransport` — MCP SSE flow: GET stream, endpoint event, POST messages back, custom headers forwarded on both directions
 - [x] OAuth2 client-credentials token flow + composable `BearerTokenHTTPClient` decorator
 - [x] `StreamableHTTPClientTransport`: POST request with JSON / 202 / SSE response paths per the MCP streamable-HTTP spec.
-- [ ] `HTTPServer` on NIO: routes for `/status`, `/sse`, `/messages/`, `/mcp`, and `/servers/<name>/{sse,mcp}`. CORS via `--allow-origin` / `--expose-header`. Stateless mode for `/mcp`.
+- [x] NIO HTTP/1.1 server scaffold + `ServerRouter` (registers method/path → handler, 404/405 split). Streaming response support via chunked transfer-encoding.
+- [ ] MCP server-side routes on top of the scaffold: `/status`, `/sse`, `/messages/`, `/mcp`, `/servers/<name>/{sse,mcp}`. CORS via `--allow-origin` / `--expose-header`. Stateless mode for `/mcp`.
 
 ## Phase 2 — Proxy core
 
