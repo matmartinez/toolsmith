@@ -172,6 +172,16 @@ struct Toolsmith: AsyncParsableCommand {
             ))
         }
 
+        if let path = namedServerConfig {
+            let configFile = try ServerConfigLoader.load(contentsOfFile: path)
+            specs.append(contentsOf: ServerConfigLoader.specs(
+                from: configFile,
+                executable: envURL,
+                defaultEnv: environment,
+                cwd: workingDirectory
+            ))
+        }
+
         let cors: CORSConfig? = allowOrigin.isEmpty
             ? nil
             : CORSConfig(allowedOrigins: allowOrigin, exposedHeaders: exposeHeader)
