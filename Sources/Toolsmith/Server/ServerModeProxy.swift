@@ -38,12 +38,19 @@ public actor ServerModeProxy {
     public let port: Int
     public let servers: [NamedServer]
     public let version: String
+    public let cors: CORSConfig?
 
     private var children: [ChildSession] = []
     private var httpServer: HTTPServer?
     public let activity = ActivityTracker()
 
-    public init(host: String, port: Int, servers: [NamedServer], version: String = "0.0.0") throws {
+    public init(
+        host: String,
+        port: Int,
+        servers: [NamedServer],
+        version: String = "0.0.0",
+        cors: CORSConfig? = nil
+    ) throws {
         guard !servers.isEmpty else { throw Failure.noServers }
         var seen = Set<String>()
         for spec in servers {
@@ -55,6 +62,7 @@ public actor ServerModeProxy {
         self.port = port
         self.servers = servers
         self.version = version
+        self.cors = cors
     }
 
     /// Spawn every server, register their routes, and bind the HTTP
@@ -85,6 +93,7 @@ public actor ServerModeProxy {
             activity: activity,
             version: version
         )
+        if let cors { applyCORS(to: &router, config: cors) }
         let httpServer = HTTPServer(router: router)
         let address = try await httpServer.start(host: host, port: port)
         self.httpServer = httpServer

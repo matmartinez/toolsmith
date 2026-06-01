@@ -172,7 +172,10 @@ struct Toolsmith: AsyncParsableCommand {
             ))
         }
 
-        let proxy = try ServerModeProxy(host: host, port: port, servers: specs)
+        let cors: CORSConfig? = allowOrigin.isEmpty
+            ? nil
+            : CORSConfig(allowedOrigins: allowOrigin, exposedHeaders: exposeHeader)
+        let proxy = try ServerModeProxy(host: host, port: port, servers: specs, cors: cors)
         let address = try await proxy.start()
         FileHandle.standardError.write(
             Data("toolsmith: listening on http://\(host):\(address.port ?? port)\n".utf8)
