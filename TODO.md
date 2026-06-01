@@ -13,7 +13,7 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 - [x] `StreamableHTTPClientTransport`: POST request with JSON / 202 / SSE response paths per the MCP streamable-HTTP spec.
 - [x] NIO HTTP/1.1 server scaffold + `ServerRouter` (registers method/path → handler, 404/405 split). Streaming response support via chunked transfer-encoding.
 - [x] MCP SSE server-side routes: `/sse` + `/messages` (default), `/servers/<name>/{sse,messages}` per named server, `/status` with activity tracker, CORS via `--allow-origin` / `--expose-header` including OPTIONS preflight
-- [ ] `/mcp` streamable-HTTP server route (with session tracking + per-request response routing). Stateless mode toggle.
+- [x] `/mcp` streamable-HTTP server route: POST (notification → 202, request → SSE stream closing on matching reply, response → 400) and GET (server-initiated SSE). Leading `: stream-open` comment chunk to force URLSession header delivery.
 
 ## Phase 2 — Proxy core
 
