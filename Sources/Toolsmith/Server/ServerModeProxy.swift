@@ -85,8 +85,14 @@ public actor ServerModeProxy {
             switch spec.backend {
             case let .stdioChild(executable, args, env, cwd):
                 backend = ChildSession(executable: executable, args: args, env: env, cwd: cwd)
-            case .cliExposure:
-                preconditionFailure("CLIBackend not yet implemented; arrives in the next commit")
+            case let .cliExposure(config):
+                backend = CLIBackend(
+                    exposure: config,
+                    serverInfo: MCPImplementation(
+                        name: spec.name.isEmpty ? "toolsmith-cli" : spec.name,
+                        version: version
+                    )
+                )
             }
             try await backend.start()
             let prefix = spec.name.isEmpty ? "" : "/servers/\(spec.name)"
