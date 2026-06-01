@@ -7,7 +7,9 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 - [x] JSON-RPC 2.0 envelope types (`Request`, `Response`, `Notification`, `Error`) with `Codable` + round-trip tests
 - [x] MCP message types against spec rev 2025-06-18: `initialize`, `tools/*`, `resources/*`, `resources/templates/*`, `prompts/*`, `completion/complete`, `logging/setLevel`, progress, cancellation, list-changed notifications
 - [x] `StdioTransport`: line-delimited JSON over `FileHandle`/`Pipe`. Drives both the child process (server mode) and our own stdin/stdout (client mode).
-- [ ] `HTTPClientTransport` on NIO: POST with custom headers, SSE response stream, OAuth2 client-credentials token flow (port `httpx-auth` behavior), TLS verification toggle.
+- [x] HTTP client abstraction (`HTTPClient` protocol) with URLSession-backed implementation; TLS-toggle via per-session delegate
+- [x] `SSEClientTransport` — MCP SSE flow: GET stream, endpoint event, POST messages back, custom headers forwarded on both directions
+- [ ] OAuth2 client-credentials token flow on top of `HTTPClient` (port `httpx-auth` behavior)
 - [ ] `StreamableHTTPClientTransport`: POST request with chunked streaming response per the MCP streamable-HTTP spec.
 - [ ] `HTTPServer` on NIO: routes for `/status`, `/sse`, `/messages/`, `/mcp`, and `/servers/<name>/{sse,mcp}`. CORS via `--allow-origin` / `--expose-header`. Stateless mode for `/mcp`.
 
