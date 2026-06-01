@@ -78,6 +78,9 @@ struct Toolsmith: AsyncParsableCommand {
     @Option(name: .customLong("named-server-config"), help: "Path to a JSON file declaring named servers.")
     var namedServerConfig: String?
 
+    @Option(name: .customLong("cli-tools-config"), help: "Path to a JSON file declaring host CLIs to expose as MCP servers.")
+    var cliToolsConfig: String?
+
     // MARK: HTTP server options
 
     @Option(help: "Port for the local HTTP server (0 = random).")
@@ -129,8 +132,9 @@ struct Toolsmith: AsyncParsableCommand {
         let hasDefaultServer = commandOrUrl != nil
         let hasNamedServer = !namedServer.isEmpty
         let hasConfig = namedServerConfig != nil
-        if !(hasDefaultServer || hasNamedServer || hasConfig) {
-            throw ValidationError("Provide a command-or-URL, --named-server, or --named-server-config.")
+        let hasCLITools = cliToolsConfig != nil
+        if !(hasDefaultServer || hasNamedServer || hasConfig || hasCLITools) {
+            throw ValidationError("Provide a command-or-URL, --named-server, --named-server-config, or --cli-tools-config.")
         }
 
         if let ssePort, self.port == 0 { self.port = ssePort }
@@ -183,6 +187,11 @@ struct Toolsmith: AsyncParsableCommand {
                 defaultEnv: environment,
                 cwd: workingDirectory
             ))
+        }
+
+        if let path = cliToolsConfig {
+            let cliFile = try CLIToolsLoader.load(contentsOfFile: path)
+            specs.append(contentsOf: CLIToolsLoader.specs(from: cliFile))
         }
 
         let cors: CORSConfig? = allowOrigin.isEmpty
