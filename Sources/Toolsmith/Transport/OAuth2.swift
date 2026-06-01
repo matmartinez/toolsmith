@@ -46,7 +46,7 @@ public actor OAuth2ClientCredentialsProvider {
 
     private let clientId: String
     private let clientSecret: String
-    private let tokenURL: URL
+    public let tokenURL: URL
     private let httpClient: HTTPClient
     private let refreshSkew: TimeInterval
 

@@ -138,10 +138,13 @@ struct Toolsmith: AsyncParsableCommand {
     }
 
     mutating func run() async throws {
+        Logger.shared.setMinLevel(debug ? .debug : logLevel)
         switch Mode.detect(commandOrUrl: commandOrUrl) {
         case .client:
+            Logger.shared.debug("entering client mode")
             try await runClientMode()
         case .server:
+            Logger.shared.debug("entering server mode")
             try await runServerMode()
         }
     }
@@ -185,13 +188,16 @@ struct Toolsmith: AsyncParsableCommand {
         let cors: CORSConfig? = allowOrigin.isEmpty
             ? nil
             : CORSConfig(allowedOrigins: allowOrigin, exposedHeaders: exposeHeader)
+        for spec in specs {
+            let label = spec.name.isEmpty ? "(default)" : spec.name
+            Logger.shared.info("setting up server '\(label)': \(spec.args.joined(separator: " "))")
+        }
         let proxy = try ServerModeProxy(host: host, port: port, servers: specs, cors: cors)
         let address = try await proxy.start()
-        FileHandle.standardError.write(
-            Data("toolsmith: listening on http://\(host):\(address.port ?? port)\n".utf8)
-        )
+        Logger.shared.info("listening on http://\(host):\(address.port ?? port)")
 
         await Self.waitForTerminationSignal()
+        Logger.shared.info("shutdown signal received; stopping")
         await proxy.stop()
     }
 
@@ -273,19 +279,23 @@ struct Toolsmith: AsyncParsableCommand {
 
         var httpClient: HTTPClient = URLSessionHTTPClient(verifyTLS: !noVerifySsl)
         if let oauth = makeOAuthProvider(httpClient: httpClient) {
+            Logger.shared.info("using OAuth2 client-credentials against \(oauth.tokenURL)")
             httpClient = BearerTokenHTTPClient(inner: httpClient) {
                 try await oauth.accessToken()
             }
         } else if let token = ProcessInfo.processInfo.environment["API_ACCESS_TOKEN"],
                   !parsed.contains(where: { $0.0.caseInsensitiveCompare("Authorization") == .orderedSame }) {
+            Logger.shared.debug("API_ACCESS_TOKEN present; injecting Authorization header")
             httpClient = BearerTokenHTTPClient(inner: httpClient) { token }
         }
 
         let remote: ClientTransport
         switch transport {
         case .sse:
+            Logger.shared.info("connecting via SSE to \(url)")
             remote = SSEClientTransport(url: url, headers: parsed, httpClient: httpClient)
         case .streamablehttp:
+            Logger.shared.info("connecting via streamable-HTTP to \(url)")
             remote = StreamableHTTPClientTransport(url: url, headers: parsed, httpClient: httpClient)
         }
 
@@ -294,6 +304,7 @@ struct Toolsmith: AsyncParsableCommand {
             output: FileHandle.standardOutput
         )
         try await ClientModeProxy.run(local: local, remote: remote)
+        Logger.shared.info("client mode finished")
     }
 
     private func makeOAuthProvider(httpClient: HTTPClient) -> OAuth2ClientCredentialsProvider? {

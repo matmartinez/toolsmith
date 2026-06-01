@@ -19,10 +19,24 @@ enum TransportKind: String, CaseIterable {
     case streamablehttp
 }
 
-enum LogLevel: String, CaseIterable {
+enum LogLevel: String, CaseIterable, Sendable, Comparable {
     case debug = "DEBUG"
     case info = "INFO"
     case warning = "WARNING"
     case error = "ERROR"
     case critical = "CRITICAL"
+
+    var severity: Int {
+        switch self {
+        case .debug: 0
+        case .info: 1
+        case .warning: 2
+        case .error: 3
+        case .critical: 4
+        }
+    }
+
+    static func < (lhs: LogLevel, rhs: LogLevel) -> Bool {
+        lhs.severity < rhs.severity
+    }
 }

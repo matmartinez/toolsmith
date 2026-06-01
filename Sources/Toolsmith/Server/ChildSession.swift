@@ -44,6 +44,11 @@ public actor ChildSession {
         guard !started else { throw Failure.alreadyStarted }
         try process.run()
         started = true
+        Logger.shared.debug(
+            "spawned child pid=\(process.processIdentifier) " +
+            "exec=\(process.executableURL?.path ?? "?") " +
+            "args=\((process.arguments ?? []).joined(separator: " "))"
+        )
         let transport = self.transport
         pumpTask = Task { [weak self] in
             do {
@@ -52,6 +57,7 @@ public actor ChildSession {
                 }
                 await self?.finishAll(throwing: nil)
             } catch {
+                Logger.shared.error("child pump errored: \(error)")
                 await self?.finishAll(throwing: error)
             }
         }
@@ -77,6 +83,7 @@ public actor ChildSession {
     }
 
     public func stop() {
+        let pid = process.processIdentifier
         pumpTask?.cancel()
         pumpTask = nil
         for (_, continuation) in subscribers { continuation.finish() }
@@ -84,6 +91,7 @@ public actor ChildSession {
         if process.isRunning { process.terminate() }
         process.waitUntilExit()
         started = false
+        Logger.shared.debug("stopped child pid=\(pid) status=\(process.terminationStatus)")
     }
 
     private func broadcast(_ message: JSONRPCMessage) {
