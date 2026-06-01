@@ -138,14 +138,69 @@ struct Toolsmith: AsyncParsableCommand {
     }
 
     mutating func run() async throws {
-        let mode = Mode.detect(commandOrUrl: commandOrUrl)
-        let effectiveLogLevel: LogLevel = debug ? .debug : logLevel
+        switch Mode.detect(commandOrUrl: commandOrUrl) {
+        case .client:
+            try await runClientMode()
+        case .server:
+            FileHandle.standardError.write(Data("toolsmith: server mode not implemented yet\n".utf8))
+            throw ExitCode.failure
+        }
+    }
 
-        print("toolsmith: mode=\(mode) commandOrUrl=\(commandOrUrl ?? "<nil>") args=\(args)")
-        print("toolsmith: transport=\(transport) host=\(host) port=\(port) stateless=\(stateless)")
-        print("toolsmith: logLevel=\(effectiveLogLevel) passEnvironment=\(passEnvironment)")
-        if !namedServer.isEmpty { print("toolsmith: namedServer=\(namedServer)") }
-        if let namedServerConfig { print("toolsmith: namedServerConfig=\(namedServerConfig)") }
-        print("toolsmith: not implemented")
+    private func runClientMode() async throws {
+        guard let raw = commandOrUrl, let url = URL(string: raw) else {
+            throw ValidationError("client mode requires an http(s):// URL")
+        }
+        let parsed = try Self.parseHeaders(headers)
+
+        var httpClient: HTTPClient = URLSessionHTTPClient(verifyTLS: !noVerifySsl)
+        if let oauth = makeOAuthProvider(httpClient: httpClient) {
+            httpClient = BearerTokenHTTPClient(inner: httpClient) {
+                try await oauth.accessToken()
+            }
+        } else if let token = ProcessInfo.processInfo.environment["API_ACCESS_TOKEN"],
+                  !parsed.contains(where: { $0.0.caseInsensitiveCompare("Authorization") == .orderedSame }) {
+            httpClient = BearerTokenHTTPClient(inner: httpClient) { token }
+        }
+
+        let remote: ClientTransport
+        switch transport {
+        case .sse:
+            remote = SSEClientTransport(url: url, headers: parsed, httpClient: httpClient)
+        case .streamablehttp:
+            remote = StreamableHTTPClientTransport(url: url, headers: parsed, httpClient: httpClient)
+        }
+
+        let local = StdioTransport(
+            input: FileHandle.standardInput,
+            output: FileHandle.standardOutput
+        )
+        try await ClientModeProxy.run(local: local, remote: remote)
+    }
+
+    private func makeOAuthProvider(httpClient: HTTPClient) -> OAuth2ClientCredentialsProvider? {
+        guard let id = clientId,
+              let secret = clientSecret,
+              let urlString = tokenUrl,
+              let url = URL(string: urlString)
+        else { return nil }
+        return OAuth2ClientCredentialsProvider(
+            clientId: id,
+            clientSecret: secret,
+            tokenURL: url,
+            httpClient: httpClient
+        )
+    }
+
+    static func parseHeaders(_ raw: [String]) throws -> [(String, String)] {
+        try raw.map { value in
+            guard let colon = value.firstIndex(of: ":") else {
+                throw ValidationError(#"malformed --header "\#(value)"; expected "NAME: VALUE""#)
+            }
+            let name = value[..<colon].trimmingCharacters(in: .whitespaces)
+            var rest = value[value.index(after: colon)...]
+            if rest.first == " " { rest = rest.dropFirst() }
+            return (name, String(rest))
+        }
     }
 }
