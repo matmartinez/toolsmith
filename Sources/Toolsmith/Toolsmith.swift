@@ -147,44 +147,75 @@ struct Toolsmith: AsyncParsableCommand {
     }
 
     private func runServerMode() async throws {
-        guard let command = commandOrUrl else {
-            throw ValidationError("server mode needs a command to spawn")
-        }
-
         let envDict = try Self.parseEnvPairs(env)
-        let environment: [String: String]?
-        if passEnvironment {
-            var merged = ProcessInfo.processInfo.environment
-            for (key, value) in envDict { merged[key] = value }
-            environment = merged
-        } else if !envDict.isEmpty {
-            environment = envDict
-        } else {
-            environment = nil
+        let environment = Self.mergeEnvironment(envDict, passEnvironment: passEnvironment)
+        let workingDirectory = cwd.map { URL(fileURLWithPath: $0) }
+        let envURL = URL(fileURLWithPath: "/usr/bin/env")
+
+        var specs: [ServerModeProxy.NamedServer] = []
+        if let defaultCommand = commandOrUrl {
+            specs.append(ServerModeProxy.NamedServer(
+                name: "",
+                executable: envURL,
+                args: [defaultCommand] + args,
+                env: environment,
+                cwd: workingDirectory
+            ))
+        }
+        for entry in try Self.parseNamedServerEntries(namedServer) {
+            specs.append(ServerModeProxy.NamedServer(
+                name: entry.name,
+                executable: envURL,
+                args: entry.commandWords,
+                env: environment,
+                cwd: workingDirectory
+            ))
         }
 
-        let workingDirectory = cwd.map { URL(fileURLWithPath: $0) }
-
-        let child = ChildSession.usingPATH(
-            command: command,
-            args: args,
-            env: environment,
-            cwd: workingDirectory
-        )
-        try await child.start()
-
-        var router = ServerRouter()
-        ServerModeRoutes.register(on: &router, child: child)
-        let server = HTTPServer(router: router)
-        let address = try await server.start(host: host, port: port)
-
+        let proxy = try ServerModeProxy(host: host, port: port, servers: specs)
+        let address = try await proxy.start()
         FileHandle.standardError.write(
             Data("toolsmith: listening on http://\(host):\(address.port ?? port)\n".utf8)
         )
 
         await Self.waitForTerminationSignal()
-        try? await server.stop()
-        await child.stop()
+        await proxy.stop()
+    }
+
+    static func mergeEnvironment(
+        _ explicit: [String: String],
+        passEnvironment: Bool
+    ) -> [String: String]? {
+        if passEnvironment {
+            var merged = ProcessInfo.processInfo.environment
+            for (key, value) in explicit { merged[key] = value }
+            return merged
+        }
+        return explicit.isEmpty ? nil : explicit
+    }
+
+    struct NamedServerEntry: Equatable {
+        var name: String
+        var commandWords: [String]
+    }
+
+    static func parseNamedServerEntries(_ raw: [String]) throws -> [NamedServerEntry] {
+        try raw.map { value in
+            guard let equals = value.firstIndex(of: "=") else {
+                throw ValidationError(#"malformed --named-server "\#(value)"; expected "NAME=COMMAND""#)
+            }
+            let name = String(value[..<equals])
+            guard !name.isEmpty else {
+                throw ValidationError("--named-server name cannot be empty")
+            }
+            let command = String(value[value.index(after: equals)...])
+            let words = command.split(whereSeparator: { $0 == " " || $0 == "\t" })
+                .map(String.init)
+            guard !words.isEmpty else {
+                throw ValidationError("--named-server \"\(name)\" has an empty command")
+            }
+            return NamedServerEntry(name: name, commandWords: words)
+        }
     }
 
     static func parseEnvPairs(_ raw: [String]) throws -> [String: String] {
