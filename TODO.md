@@ -4,8 +4,8 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 
 ## Phase 1 — Protocol & transport layer
 
-- [ ] JSON-RPC 2.0 envelope types (`Request`, `Response`, `Notification`, `Error`) with `Codable` + round-trip tests
-- [ ] MCP message types: `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `resources/templates/list`, `resources/subscribe`/`unsubscribe`, `prompts/list`, `prompts/get`, `completion/complete`, `logging/setLevel`, progress notifications. Shapes match upstream `mcp` Python SDK.
+- [x] JSON-RPC 2.0 envelope types (`Request`, `Response`, `Notification`, `Error`) with `Codable` + round-trip tests
+- [x] MCP message types against spec rev 2025-06-18: `initialize`, `tools/*`, `resources/*`, `resources/templates/*`, `prompts/*`, `completion/complete`, `logging/setLevel`, progress, cancellation, list-changed notifications
 - [ ] `StdioTransport`: line-delimited JSON over `FileHandle`/`Pipe`. Drives both the child process (server mode) and our own stdin/stdout (client mode).
 - [ ] `HTTPClientTransport` on NIO: POST with custom headers, SSE response stream, OAuth2 client-credentials token flow (port `httpx-auth` behavior), TLS verification toggle.
 - [ ] `StreamableHTTPClientTransport`: POST request with chunked streaming response per the MCP streamable-HTTP spec.
