@@ -1,0 +1,40 @@
+{
+  "cliServers": {
+    "git": {
+      "executable": "/usr/bin/git",
+      "tools": [
+        {
+          "name": "status",
+          "description": "Show the working tree status (short form).",
+          "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          },
+          "argv": [
+            { "literal": "status" },
+            { "literal": "--porcelain" }
+          ]
+        },
+        {
+          "name": "log",
+          "description": "Show commit logs.",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "path":    { "type": "string" },
+              "limit":   { "type": "integer" },
+              "verbose": { "type": "boolean" }
+            }
+          },
+          "argv": [
+            { "literal": "log" },
+            { "flag": "-n", "argument": "limit" },
+            { "booleanFlag": "--stat", "argument": "verbose" },
+            { "optionalArgument": "path" }
+          ]
+        }
+      ]
+    }
+  }
+}
