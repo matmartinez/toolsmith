@@ -9,6 +9,7 @@ public actor CLIBackend: MCPServerBackend {
     private let exposure: CLIExposureConfig
     private let serverInfo: MCPImplementation
     private var subscribers: [UUID: AsyncThrowingStream<JSONRPCMessage, Error>.Continuation] = [:]
+    private var cachedTemplateMatchers: [(URITemplateMatcher, CLIResourceTemplateSpec)]?
 
     public init(
         exposure: CLIExposureConfig,
@@ -58,6 +59,12 @@ public actor CLIBackend: MCPServerBackend {
             return toolsListResponse(id: request.id)
         case mcpCallToolMethod:
             return await callToolResponse(id: request.id, params: request.params)
+        case mcpListResourcesMethod:
+            return listResourcesResponse(id: request.id)
+        case mcpListResourceTemplatesMethod:
+            return listResourceTemplatesResponse(id: request.id)
+        case mcpReadResourceMethod:
+            return await readResourceResponse(id: request.id, params: request.params)
         default:
             return JSONRPCResponse(id: request.id, error: JSONRPCError(
                 code: JSONRPCError.methodNotFound,
@@ -67,9 +74,14 @@ public actor CLIBackend: MCPServerBackend {
     }
 
     private func initializeResponse(id: JSONRPCID) -> JSONRPCResponse {
+        let hasResources = !(exposure.resources ?? []).isEmpty
+            || !(exposure.resourceTemplates ?? []).isEmpty
         let result = MCPInitializeResult(
             protocolVersion: latestMCPProtocolVersion,
             capabilities: MCPServerCapabilities(
+                resources: hasResources
+                    ? MCPResourcesCapability(subscribe: false, listChanged: false)
+                    : nil,
                 tools: MCPToolsCapability(listChanged: false)
             ),
             serverInfo: serverInfo
@@ -124,28 +136,13 @@ public actor CLIBackend: MCPServerBackend {
 
         Logger.shared.debug("invoking \(exposure.executable) \(argv.joined(separator: " "))")
 
-        // Merge parent env underneath the per-server overrides. Host
-        // CLIs almost always need PATH/HOME/USER from the parent —
-        // passing the per-server `env` block alone (the way Foundation
-        // Process treats a non-nil env) would isolate the child and
-        // break common cases like `things add`, which needs `open` on
-        // PATH to fire its URL scheme.
-        let effectiveEnv: [String: String]?
-        if let overrides = exposure.env {
-            var merged = ProcessInfo.processInfo.environment
-            for (key, value) in overrides { merged[key] = value }
-            effectiveEnv = merged
-        } else {
-            effectiveEnv = nil  // nil ⇒ Process inherits parent env wholesale
-        }
-
         // Run the CLI.
         let result: CLIInvocationResult
         do {
             result = try await runCLI(
                 executable: URL(fileURLWithPath: exposure.executable),
                 args: argv,
-                env: effectiveEnv,
+                env: effectiveEnv(),
                 cwd: exposure.cwd.map { URL(fileURLWithPath: $0) }
             )
         } catch {
@@ -167,8 +164,156 @@ public actor CLIBackend: MCPServerBackend {
         return JSONRPCResponse(id: id, result: Self.encodeAsJSONValue(callResult) ?? .null)
     }
 
+    private func listResourcesResponse(id: JSONRPCID) -> JSONRPCResponse {
+        let resources = (exposure.resources ?? []).map { spec in
+            MCPResource(
+                name: spec.name,
+                uri: spec.uri,
+                title: spec.title,
+                description: spec.description,
+                mimeType: spec.mimeType
+            )
+        }
+        let result = MCPListResourcesResult(resources: resources)
+        return JSONRPCResponse(id: id, result: Self.encodeAsJSONValue(result) ?? .null)
+    }
+
+    private func listResourceTemplatesResponse(id: JSONRPCID) -> JSONRPCResponse {
+        let templates = (exposure.resourceTemplates ?? []).map { spec in
+            MCPResourceTemplate(
+                name: spec.name,
+                uriTemplate: spec.uriTemplate,
+                title: spec.title,
+                description: spec.description,
+                mimeType: spec.mimeType
+            )
+        }
+        let result = MCPListResourceTemplatesResult(resourceTemplates: templates)
+        return JSONRPCResponse(id: id, result: Self.encodeAsJSONValue(result) ?? .null)
+    }
+
+    private func readResourceResponse(id: JSONRPCID, params: JSONValue?) async -> JSONRPCResponse {
+        // Decode resources/read params.
+        let readParams: MCPReadResourceParams
+        do {
+            let data = try WireJSON.encoder().encode(params ?? .null)
+            readParams = try WireJSON.decoder().decode(MCPReadResourceParams.self, from: data)
+        } catch {
+            return errorResponse(id: id, code: JSONRPCError.invalidParams,
+                                 message: "Invalid resources/read params: \(error)")
+        }
+        let uri = readParams.uri
+
+        // Static lookup first.
+        var arguments: [String: JSONValue] = ["uri": .string(uri)]
+        var argvSpec: [ArgvSpec]?
+        var output: CLIResourceOutput = .text
+        var mimeType: String?
+        var sourceName = uri
+
+        if let staticSpec = (exposure.resources ?? []).first(where: { $0.uri == uri }) {
+            argvSpec = staticSpec.argv
+            output = staticSpec.output ?? .text
+            mimeType = staticSpec.mimeType
+            sourceName = staticSpec.name
+        } else {
+            for (matcher, spec) in templateMatchers() {
+                if let captures = matcher.match(uri) {
+                    for (k, v) in captures { arguments[k] = .string(v) }
+                    argvSpec = spec.argv
+                    output = spec.output ?? .text
+                    mimeType = spec.mimeType
+                    sourceName = spec.name
+                    break
+                }
+            }
+        }
+
+        guard let argv0 = argvSpec else {
+            return errorResponse(id: id, code: -32002,
+                                 message: "Resource not found: \(uri)")
+        }
+
+        // Project argv.
+        let argv: [String]
+        do {
+            argv = try projectArgv(argv0, arguments: arguments)
+        } catch ArgvProjectionError.missingRequired(let name) {
+            return errorResponse(id: id, code: JSONRPCError.invalidParams,
+                                 message: "Missing required argument '\(name)' for resource '\(sourceName)'")
+        } catch ArgvProjectionError.unsupportedValueType(let name) {
+            return errorResponse(id: id, code: JSONRPCError.invalidParams,
+                                 message: "Unsupported value type for argument '\(name)' on resource '\(sourceName)'")
+        } catch {
+            return errorResponse(id: id, code: JSONRPCError.invalidParams,
+                                 message: "Argv projection failed for '\(sourceName)': \(error)")
+        }
+
+        Logger.shared.debug("invoking \(exposure.executable) \(argv.joined(separator: " "))")
+
+        let result: CLIInvocationResult
+        do {
+            result = try await runCLI(
+                executable: URL(fileURLWithPath: exposure.executable),
+                args: argv,
+                env: effectiveEnv(),
+                cwd: exposure.cwd.map { URL(fileURLWithPath: $0) }
+            )
+        } catch {
+            return errorResponse(id: id, code: -32000,
+                                 message: "Spawn failed for resource '\(sourceName)': \(error)")
+        }
+
+        if result.exitCode != 0 {
+            let stderrText = String(decoding: result.stderr, as: UTF8.self)
+            let stdoutText = String(decoding: result.stdout, as: UTF8.self)
+            let detail = stderrText.isEmpty ? stdoutText : stderrText
+            return errorResponse(id: id, code: -32002,
+                                 message: "Resource read failed for '\(sourceName)': \(detail)")
+        }
+
+        let contents: MCPResourceContents
+        switch output {
+        case .text:
+            let text = String(decoding: result.stdout, as: UTF8.self)
+            contents = .text(MCPTextResourceContents(uri: uri, text: text, mimeType: mimeType))
+        case .blob:
+            let blob = result.stdout.base64EncodedString()
+            contents = .blob(MCPBlobResourceContents(uri: uri, blob: blob, mimeType: mimeType))
+        }
+        let readResult = MCPReadResourceResult(contents: [contents])
+        return JSONRPCResponse(id: id, result: Self.encodeAsJSONValue(readResult) ?? .null)
+    }
+
     private func errorResponse(id: JSONRPCID, code: Int, message: String) -> JSONRPCResponse {
         JSONRPCResponse(id: id, error: JSONRPCError(code: code, message: message))
+    }
+
+    /// Merge parent env underneath the per-server overrides. Host
+    /// CLIs almost always need PATH/HOME/USER from the parent —
+    /// passing the per-server `env` block alone (the way Foundation
+    /// Process treats a non-nil env) would isolate the child and
+    /// break common cases like `things add`, which needs `open` on
+    /// PATH to fire its URL scheme.
+    private func effectiveEnv() -> [String: String]? {
+        guard let overrides = exposure.env else { return nil }
+        var merged = ProcessInfo.processInfo.environment
+        for (key, value) in overrides { merged[key] = value }
+        return merged
+    }
+
+    /// Lazy-compile the configured templates. `CLIResourceTemplateSpec`
+    /// already validated each template at decode time, so re-compiling
+    /// here cannot fail in practice; any failure is silently dropped
+    /// (the corresponding URI will simply never match).
+    private func templateMatchers() -> [(URITemplateMatcher, CLIResourceTemplateSpec)] {
+        if let cached = cachedTemplateMatchers { return cached }
+        let pairs = (exposure.resourceTemplates ?? []).compactMap { spec -> (URITemplateMatcher, CLIResourceTemplateSpec)? in
+            guard let matcher = try? URITemplateMatcher.compile(spec.uriTemplate) else { return nil }
+            return (matcher, spec)
+        }
+        cachedTemplateMatchers = pairs
+        return pairs
     }
 
     /// Round-trip a typed encodable into a JSONValue payload so it can
