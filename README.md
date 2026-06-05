@@ -126,6 +126,40 @@ Argv tokens are tagged objects, one variant per kind:
 
 A full `samples/cli-tools.json` is checked into the repo.
 
+**Resources**: a CLI server can also expose MCP resources alongside
+its tools. Each entry adds optional `resources` and/or
+`resourceTemplates` arrays. Static entries match a URI exactly;
+templates use `{name}` placeholders that become captured arguments
+available to the same `argv` projection used for tools. The captured
+values, plus a synthetic `uri` argument carrying the inbound URI, are
+projected through `argv` and the subprocess's stdout is wrapped as
+either text or base64 blob per the `output` field.
+
+```json
+"files": {
+  "executable": "/bin/cat",
+  "tools": [],
+  "resources": [
+    { "name": "hosts", "uri": "file:///etc/hosts",
+      "mimeType": "text/plain", "output": "text",
+      "argv": [ { "literal": "/etc/hosts" } ] }
+  ],
+  "resourceTemplates": [
+    { "name": "text-file", "uriTemplate": "file-text://{path}",
+      "mimeType": "text/plain", "output": "text",
+      "argv": [ { "argument": "path" } ] },
+    { "name": "binary-file", "uriTemplate": "file-bytes://{path}",
+      "mimeType": "application/octet-stream", "output": "blob",
+      "argv": [ { "argument": "path" } ] }
+  ]
+}
+```
+
+The `resources` capability is advertised on `initialize` only when at
+least one resource or template is declared. `resources/subscribe`,
+list-changed notifications, and RFC 6570 template operators are not
+supported in this phase.
+
 **Env merging**: the per-server `env` block is layered on top of the
 parent process's environment — host CLIs almost always need `PATH`,
 `HOME`, etc. to function. Use `env` for overrides and additions; the

@@ -35,6 +35,41 @@
           ]
         }
       ]
+    },
+    "files": {
+      "executable": "/bin/cat",
+      "tools": [],
+      "resources": [
+        {
+          "name": "hosts",
+          "uri": "file:///etc/hosts",
+          "mimeType": "text/plain",
+          "output": "text",
+          "argv": [
+            { "literal": "/etc/hosts" }
+          ]
+        }
+      ],
+      "resourceTemplates": [
+        {
+          "name": "text-file",
+          "uriTemplate": "file-text://{path}",
+          "mimeType": "text/plain",
+          "output": "text",
+          "argv": [
+            { "argument": "path" }
+          ]
+        },
+        {
+          "name": "binary-file",
+          "uriTemplate": "file-bytes://{path}",
+          "mimeType": "application/octet-stream",
+          "output": "blob",
+          "argv": [
+            { "argument": "path" }
+          ]
+        }
+      ]
     }
   }
 }

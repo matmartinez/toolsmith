@@ -34,8 +34,16 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 
 - [x] **CLI-as-MCP-server**: separate `--cli-tools-config <path>` config file declares host executables and the MCP tools they expose. Each `tools/call` runs a one-shot subprocess via `CLIRunner`; stdout → `TextContent`; non-zero exit → `isError: true` with stderr. Argv encoded as discriminated tagged objects (`literal`, `argument`, `optionalArgument`, `flag`, `booleanFlag`). `CLIBackend` actor implements `MCPServerBackend` in-process so the existing routes serve it untouched. Sample at `samples/cli-tools.json`. Mixed-backend integration test in place.
 
+## Phase 5 — CLI-as-MCP-server: resources
+
+- [x] **Resource exposure**: `CLIExposureConfig` gains optional `resources` and `resourceTemplates`. `resources/list` and `resources/templates/list` advertise them; `resources/read` matches the URI (exact for static, `{name}`-placeholder template for dynamic), projects captures through the existing `projectArgv`, spawns via `runCLI`, and wraps stdout as text or base64 blob per the spec's `output` field. Captures are percent-decoded and a synthetic `uri` argument carries the inbound URI verbatim. `MCPResourcesCapability(subscribe: false, listChanged: false)` advertised only when at least one resource or template is declared. Unknown URI / non-zero exit surface as JSON-RPC `-32002`.
+
 ## Future (deferred)
 
+- [ ] `resources/subscribe` + `resources/unsubscribe` for CLI-backed resources.
+- [ ] CLI-driven dynamic `resources/list` (server runs a registry subcommand per request instead of serving a static config list).
+- [ ] File-path indirection for binary resource output (CLI writes to a temp file, prints the path; backend reads + base64-encodes).
+- [ ] RFC 6570 operators (`{?query}`, `{+path}`) in resource URI templates.
 - [ ] stdin piping into the CLI subprocess from a `tools/call` argument (a new `ArgvSpec` variant or a top-level `stdin: { fromArgument: "..." }` field).
 - [ ] Auto-generated CLI manifests from `--help` parsing.
 - [ ] Output schemas / `structuredContent` on `MCPCallToolResult`.
