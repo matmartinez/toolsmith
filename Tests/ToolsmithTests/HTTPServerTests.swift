@@ -57,6 +57,38 @@ struct HTTPServerTests {
         URL(string: "http://127.0.0.1:\(address.port!)")!
     }
 
+    @Test("stop() tears down cleanly with an open streaming response", .timeLimit(.minutes(1)))
+    func teardownWithOpenStream() async throws {
+        var router = ServerRouter()
+        router.register(.GET, "/hang") { _ in
+            // A parked SSE stream: one chunk, then never finishes — the
+            // shape that left an outstanding write promise and made
+            // group.shutdownGracefully() trap on "leaking promise".
+            let stream = AsyncThrowingStream<Data, Error> { continuation in
+                continuation.yield(Data(": open\n\n".utf8))
+            }
+            return ServerHTTPResponse(
+                status: .ok,
+                headers: [("Content-Type", "text/event-stream")],
+                body: .stream(stream)
+            )
+        }
+        let server = HTTPServer(router: router)
+        let address = try await server.start(host: "127.0.0.1", port: 0)
+
+        // Open the stream and read the first chunk so the connection is
+        // established and the response is mid-flight when we tear down.
+        let (bytes, response) = try await URLSession.shared.bytes(
+            from: URL(string: "http://127.0.0.1:\(address.port!)/hang")!
+        )
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        var iterator = bytes.lines.makeAsyncIterator()
+        _ = try? await iterator.next()
+
+        // Must complete without trapping on a leaked promise.
+        try await server.stop()
+    }
+
     @Test("GET /status returns a JSON 200")
     func statusRoute() async throws {
         let (server, _) = makeServer()

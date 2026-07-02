@@ -1,9 +1,10 @@
 import Foundation
+import Subprocess
+import System
 
-/// A spawned MCP server child plus its newline-delimited JSON-RPC
-/// pipes. The actor owns one `Process` and one shared `StdioTransport`,
-/// and **multiplexes** any number of concurrent client requests onto
-/// that single warm upstream session.
+/// A spawned MCP server child, driven via `swift-subprocess`, that
+/// **multiplexes** any number of concurrent client requests onto a
+/// single warm upstream session.
 ///
 /// Each inbound `request(_:)` is assigned a fresh, private upstream id;
 /// the reply that comes back carrying that id is delivered only to the
@@ -17,6 +18,12 @@ import Foundation
 /// kept warm for the process lifetime; downstream `initialize` requests
 /// are answered locally from the cached upstream result rather than
 /// re-initializing the shared child under every caller.
+///
+/// I/O uses subprocess's native per-child async streams: stdout is read
+/// on its own stream (no cross-child head-of-line blocking) and stdin is
+/// fed from a serialized outbound queue. On `stop()` the run is cancelled,
+/// which triggers a `SIGTERM`→`SIGKILL` teardown so the child is reliably
+/// reaped rather than orphaned.
 public actor ChildSession {
     public enum Failure: Error, Sendable, Equatable {
         case alreadyStarted
@@ -25,14 +32,26 @@ public actor ChildSession {
         case childExited
     }
 
-    private let process: Process
-    private let transport: StdioTransport
+    private let executablePath: String
+    private let arguments: [String]
+    private let environment: Environment
+    private let workingDirectory: FilePath?
     private let clientInfo: MCPImplementation
     private let requestTimeout: Duration
 
-    private var pumpTask: Task<Void, Never>?
+    private var runTask: Task<Void, Never>?
     private var handshakeTask: Task<Void, Never>?
     private var started = false
+
+    /// Serializes bytes written to the child's stdin. `send`/`notify`
+    /// enqueue here; a single writer loop inside the run drains it, so
+    /// concurrent senders can't interleave a JSON line.
+    private var outbound: AsyncStream<[UInt8]>.Continuation?
+
+    /// Resumed once when the child has spawned (or failed to), so
+    /// `start()` can return and the handshake can begin.
+    private var startContinuation: CheckedContinuation<Void, Error>?
+    private var didSignalStart = false
 
     /// Next private upstream id to hand out. Monotonic for the session
     /// so concurrent requests never collide, regardless of the ids the
@@ -75,67 +94,142 @@ public actor ChildSession {
         clientInfo: MCPImplementation = MCPImplementation(name: "toolsmith", version: "0.0.0"),
         requestTimeout: Duration = .seconds(60)
     ) {
-        let process = Process()
-        process.executableURL = executable
-        process.arguments = args
-        if let env { process.environment = env }
-        if let cwd { process.currentDirectoryURL = cwd }
-        let stdinPipe = Pipe()
-        let stdoutPipe = Pipe()
-        process.standardInput = stdinPipe
-        process.standardOutput = stdoutPipe
-        // stderr is inherited so child diagnostics surface on ours.
-        self.process = process
-        self.transport = StdioTransport(
-            input: stdoutPipe.fileHandleForReading,
-            output: stdinPipe.fileHandleForWriting
-        )
+        self.executablePath = executable.path
+        self.arguments = args
+        if let env {
+            // Overlay the configured vars on the inherited environment
+            // (children need a sane PATH/HOME base regardless).
+            let overrides = Dictionary(uniqueKeysWithValues: env.map {
+                (Environment.Key(stringLiteral: $0.key), Optional($0.value))
+            })
+            self.environment = Environment.inherit.updating(overrides)
+        } else {
+            self.environment = .inherit
+        }
+        self.workingDirectory = cwd.map { FilePath($0.path) }
         self.clientInfo = clientInfo
         self.requestTimeout = requestTimeout
     }
 
     // MARK: - Lifecycle
 
-    /// Spawn the child and start the pump that routes incoming messages
-    /// to the right waiter. Kicks off the `initialize` handshake in the
-    /// background so `start()` does not block on a cold child.
-    public func start() throws {
+    /// Spawn the child and start the reader/writer loops. Returns once the
+    /// child is live (or throws if it failed to spawn), then kicks off the
+    /// `initialize` handshake in the background.
+    public func start() async throws {
         guard !started else { throw Failure.alreadyStarted }
-        try process.run()
-        started = true
-        Logger.shared.debug(
-            "spawned child pid=\(process.processIdentifier) " +
-            "exec=\(process.executableURL?.path ?? "?") " +
-            "args=\((process.arguments ?? []).joined(separator: " "))"
-        )
-        let transport = self.transport
-        pumpTask = Task { [weak self] in
-            do {
-                for try await message in transport.incoming() {
-                    await self?.handleIncoming(message)
-                }
-                await self?.failAll(with: Failure.childExited)
-            } catch {
-                Logger.shared.error("child pump errored: \(error)")
-                await self?.failAll(with: error)
+        let (stream, continuation) = AsyncStream<[UInt8]>.makeStream()
+        outbound = continuation
+        let exe = executablePath
+        let args = arguments
+        let env = environment
+        let cwd = workingDirectory
+
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            startContinuation = cont
+            runTask = Task { [weak self] in
+                await self?.runChild(exe: exe, args: args, env: env, cwd: cwd, outbound: stream)
             }
         }
+        started = true
         handshakeTask = Task { [weak self] in await self?.handshake() }
     }
 
-    public func stop() {
-        let pid = process.processIdentifier
+    /// Drive the child for its whole lifetime. Cancelling this task (via
+    /// `stop()`) runs the configured `SIGTERM`→`SIGKILL` teardown.
+    private func runChild(
+        exe: String,
+        args: [String],
+        env: Environment,
+        cwd: FilePath?,
+        outbound: AsyncStream<[UInt8]>
+    ) async {
+        var options = PlatformOptions()
+        options.teardownSequence = [.gracefulShutDown(allowedDurationToNextStep: .seconds(2))]
+        do {
+            _ = try await run(
+                .path(FilePath(exe)),
+                arguments: Arguments(args),
+                environment: env,
+                workingDirectory: cwd,
+                platformOptions: options,
+                input: .inputWriter,
+                output: .sequence,
+                error: .currentStandardError
+            ) { [weak self] execution in
+                await self?.signalStarted()
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    // Reader: child stdout → decoded messages → actor.
+                    group.addTask {
+                        let decoder = WireJSON.decoder()
+                        for try await line in execution.standardOutput.strings() {
+                            if line.isEmpty { continue }
+                            if let message = try? decoder.decode(JSONRPCMessage.self, from: Data(line.utf8)) {
+                                await self?.handleIncoming(message)
+                            } else {
+                                Logger.shared.debug("child emitted non-JSON stdout: \(line)")
+                            }
+                        }
+                    }
+                    // Writer: serialized outbound queue → child stdin.
+                    group.addTask {
+                        let writer = execution.standardInputWriter
+                        for await bytes in outbound {
+                            _ = try? await writer.write(bytes)
+                        }
+                        try? await writer.finish()
+                    }
+                    // When the child's stdout ends (it exited), stop writing.
+                    try await group.next()
+                    group.cancelAll()
+                }
+            }
+        } catch {
+            Logger.shared.debug("child run ended: \(error)")
+        }
+        signalStartFailure(Failure.childExited)  // no-op if already signalled
+        failAll(with: Failure.childExited)
+        started = false
+    }
+
+    public func stop() async {
         handshakeTask?.cancel()
         handshakeTask = nil
-        pumpTask?.cancel()
-        pumpTask = nil
+        outbound?.finish()
+        outbound = nil
+        runTask?.cancel()
+        // Wait for the teardown (SIGTERM→SIGKILL) to reap the child before
+        // returning, so shutdown never leaves an orphaned process.
+        await runTask?.value
+        runTask = nil
         failAll(with: Failure.childExited)
         for (_, continuation) in eventSubscribers { continuation.finish() }
         eventSubscribers.removeAll()
-        if process.isRunning { process.terminate() }
-        process.waitUntilExit()
         started = false
-        Logger.shared.debug("stopped child pid=\(pid) status=\(process.terminationStatus)")
+    }
+
+    private func signalStarted() {
+        guard !didSignalStart else { return }
+        didSignalStart = true
+        startContinuation?.resume()
+        startContinuation = nil
+    }
+
+    private func signalStartFailure(_ error: Error) {
+        guard !didSignalStart else { return }
+        didSignalStart = true
+        startContinuation?.resume(throwing: error)
+        startContinuation = nil
+    }
+
+    /// Encode and enqueue a message for the child's stdin. Synchronous —
+    /// the write loop drains the queue in order.
+    private func enqueue(_ message: JSONRPCMessage) throws {
+        guard started, let outbound else { throw Failure.notStarted }
+        let data = try WireJSON.encoder().encode(message)
+        var bytes = [UInt8](data)
+        bytes.append(0x0A)
+        outbound.yield(bytes)
     }
 
     // MARK: - MCPServerBackend
@@ -151,8 +245,7 @@ public actor ChildSession {
         // post-initialize notification so we don't double-signal the
         // shared child.
         if notification.method == mcpInitializedNotificationMethod { return }
-        guard started else { throw Failure.notStarted }
-        try await transport.send(.notification(notification))
+        try enqueue(.notification(notification))
     }
 
     public func events() -> (id: UUID, stream: AsyncThrowingStream<JSONRPCMessage, Error>) {
@@ -201,12 +294,10 @@ public actor ChildSession {
         scheduleTimeout(upstreamId)
 
         let remapped = JSONRPCRequest(id: .number(upstreamId), method: request.method, params: request.params)
-        Task { [weak self] in
-            do {
-                try await self?.transport.send(.request(remapped))
-            } catch {
-                await self?.failRequest(upstreamId, with: error)
-            }
+        do {
+            try enqueue(.request(remapped))
+        } catch {
+            failRequest(upstreamId, with: error)
         }
     }
 
@@ -296,7 +387,7 @@ public actor ChildSession {
             let response = try await internalRoundTrip(method: mcpInitializeMethod, params: params)
             if let result = response.result {
                 cachedInitializeResult = result
-                try? await transport.send(.notification(JSONRPCNotification(method: mcpInitializedNotificationMethod)))
+                try? enqueue(.notification(JSONRPCNotification(method: mcpInitializedNotificationMethod)))
                 Logger.shared.debug("upstream handshake complete")
             }
         } catch {
@@ -311,14 +402,10 @@ public actor ChildSession {
         return try await withCheckedThrowingContinuation { continuation in
             pendingResponses[upstreamId] = continuation
             scheduleTimeout(upstreamId)
-            Task { [weak self] in
-                do {
-                    try await self?.transport.send(
-                        .request(JSONRPCRequest(id: .number(upstreamId), method: method, params: params))
-                    )
-                } catch {
-                    await self?.failResponse(upstreamId, with: error)
-                }
+            do {
+                try enqueue(.request(JSONRPCRequest(id: .number(upstreamId), method: method, params: params)))
+            } catch {
+                failResponse(upstreamId, with: error)
             }
         }
     }

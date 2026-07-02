@@ -9,6 +9,12 @@ public final class HTTPServer: @unchecked Sendable {
     public let router: ServerRouter
     private let group: MultiThreadedEventLoopGroup
     private var channel: Channel?
+    // Live accepted connections, so `stop()` can close them before the
+    // event-loop group shuts down. A long-lived streaming response (SSE)
+    // holds an outstanding write promise; if the group is torn down while
+    // that promise is unresolved, SwiftNIO traps with "leaking promise".
+    // Closing the channels first resolves those promises.
+    private let connections = ConnectionRegistry()
 
     public init(router: ServerRouter) {
         self.router = router
@@ -19,12 +25,16 @@ public final class HTTPServer: @unchecked Sendable {
     /// address (with the resolved port — useful when port=0).
     public func start(host: String, port: Int) async throws -> SocketAddress {
         let router = self.router
+        let connections = self.connections
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
                 channel.pipeline.configureHTTPServerPipeline().flatMap {
                     channel.pipeline.addHandler(HTTPServerRequestAggregator(router: router))
+                }.always { result in
+                    guard case .success = result else { return }
+                    connections.track(channel)
                 }
             }
             .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -35,8 +45,34 @@ public final class HTTPServer: @unchecked Sendable {
     }
 
     public func stop() async throws {
+        // Stop accepting, then close every open connection so streaming
+        // responses' outstanding write promises resolve, then tear down
+        // the event-loop group.
         try? await channel?.close()
+        for connection in connections.all() {
+            try? await connection.close()
+        }
         try await group.shutdownGracefully()
+    }
+}
+
+/// Thread-safe set of live child channels. Kept separate from `HTTPServer`
+/// so the bootstrap's `@Sendable` initializer closure captures only this
+/// (a `Sendable` reference) rather than the whole server.
+private final class ConnectionRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var channels: [ObjectIdentifier: Channel] = [:]
+
+    func track(_ channel: Channel) {
+        let key = ObjectIdentifier(channel)
+        lock.withLock { channels[key] = channel }
+        channel.closeFuture.whenComplete { [weak self] _ in
+            self?.lock.withLock { _ = self?.channels.removeValue(forKey: key) }
+        }
+    }
+
+    func all() -> [Channel] {
+        lock.withLock { Array(channels.values) }
     }
 }
 

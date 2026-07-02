@@ -142,6 +142,9 @@ struct Toolsmith: AsyncParsableCommand {
     }
 
     mutating func run() async throws {
+        // Writing to a child/socket whose peer has closed must fail with
+        // EPIPE (a throw), not deliver SIGPIPE and kill the process.
+        signal(SIGPIPE, SIG_IGN)
         Logger.shared.setMinLevel(debug ? .debug : logLevel)
         switch Mode.detect(commandOrUrl: commandOrUrl) {
         case .client:
