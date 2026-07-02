@@ -22,7 +22,7 @@ public enum ServerModeRoutes {
     ) {
         router.register(.GET, ssePath) { _ in
             await activity?.touch()
-            let (subscriberId, subscription) = await backend.subscribe()
+            let (subscriberId, subscription) = await backend.events()
             let endpointEvent = Data("event: endpoint\ndata: \(postPath)\n\n".utf8)
 
             let bodyStream = AsyncThrowingStream<Data, Error> { continuation in
@@ -39,9 +39,13 @@ public enum ServerModeRoutes {
                         continuation.finish(throwing: error)
                     }
                 }
+                // Keepalive so an abandoned stream is reclaimed (see
+                // StreamableHTTPRoutes.heartbeat).
+                let heartbeat = StreamableHTTPRoutes.heartbeat(continuation)
                 continuation.onTermination = { _ in
                     task.cancel()
-                    Task { await backend.unsubscribe(subscriberId) }
+                    heartbeat.cancel()
+                    Task { await backend.stopEvents(subscriberId) }
                 }
             }
 
@@ -67,7 +71,28 @@ public enum ServerModeRoutes {
                     body: .data(Data("malformed JSON-RPC body".utf8))
                 )
             }
-            try await backend.send(message)
+            switch message {
+            case .notification(let notification):
+                try await backend.notify(notification)
+            case .response:
+                // The SSE transport never carries client responses.
+                break
+            case .request(let request):
+                // The reply arrives asynchronously over the GET /sse
+                // stream, matching the legacy SSE transport contract.
+                // The backend's per-request stream carries any correlated
+                // notifications (progress) then the final response.
+                let subscription = await backend.request(request)
+                Task {
+                    do {
+                        for try await msg in subscription {
+                            await backend.emitToEvents(msg)
+                        }
+                    } catch {
+                        Logger.shared.debug("sse request stream errored: \(error)")
+                    }
+                }
+            }
             return ServerHTTPResponse(status: .accepted)
         }
     }

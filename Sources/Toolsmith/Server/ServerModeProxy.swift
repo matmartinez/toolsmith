@@ -125,9 +125,17 @@ public actor ServerModeProxy {
     }
 
     public func stop() async {
-        try? await httpServer?.stop()
-        httpServer = nil
+        // Stop the backends first. This finishes every event subscription
+        // and in-flight request stream, which lets the SSE streaming tasks
+        // driving each open response drain and complete. Only then do we
+        // tear down the HTTP server and its event-loop group — otherwise
+        // those still-running tasks try to schedule writes on an
+        // already-shut-down EventLoop, which SwiftNIO logs as an error
+        // ("Cannot schedule tasks on an EventLoop that has already shut
+        // down") and warns will become a hard crash.
         for backend in backends { await backend.stop() }
         backends.removeAll()
+        try? await httpServer?.stop()
+        httpServer = nil
     }
 }

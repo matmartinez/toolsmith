@@ -49,15 +49,11 @@ private func awaitResponse(
     method: String,
     params: JSONValue? = nil
 ) async throws -> JSONRPCResponse {
-    let (subId, stream) = await backend.subscribe()
-    try await backend.send(.request(JSONRPCRequest(id: id, method: method, params: params)))
-    var iterator = stream.makeAsyncIterator()
-    let message = try await iterator.next()
-    await backend.unsubscribe(subId)
-    guard case .response(let response) = message else {
-        throw NSError(domain: "CLIBackendTests", code: 1)
+    let stream = await backend.request(JSONRPCRequest(id: id, method: method, params: params))
+    for try await message in stream {
+        if case .response(let response) = message { return response }
     }
-    return response
+    throw NSError(domain: "CLIBackendTests", code: 1)
 }
 
 @Suite("CLIBackend")

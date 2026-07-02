@@ -34,8 +34,8 @@ public enum StreamableHTTPRoutes {
             }
 
             switch message {
-            case .notification:
-                try await backend.send(message)
+            case .notification(let notification):
+                try await backend.notify(notification)
                 return ServerHTTPResponse(status: .accepted)
 
             case .response:
@@ -46,8 +46,12 @@ public enum StreamableHTTPRoutes {
                 )
 
             case .request(let request):
-                let (subscriberId, subscription) = await backend.subscribe()
-                try await backend.send(message)
+                // The backend returns a dedicated stream for this
+                // request: any correlated notifications (progress) then
+                // exactly one final response, then it finishes. Because
+                // the backend owns id-routing, this stream carries only
+                // *this* request's traffic — no cross-delivery.
+                let subscription = await backend.request(request)
 
                 let body = AsyncThrowingStream<Data, Error> { continuation in
                     // SSE comment chunk to flush headers to the client
@@ -61,20 +65,13 @@ public enum StreamableHTTPRoutes {
                                 let json = try WireJSON.encoder().encode(msg)
                                 let payload = "event: message\ndata: \(String(decoding: json, as: UTF8.self))\n\n"
                                 continuation.yield(Data(payload.utf8))
-                                if Self.isReplyTo(request: request, message: msg) {
-                                    continuation.finish()
-                                    return
-                                }
                             }
                             continuation.finish()
                         } catch {
                             continuation.finish(throwing: error)
                         }
                     }
-                    continuation.onTermination = { _ in
-                        task.cancel()
-                        Task { await backend.unsubscribe(subscriberId) }
-                    }
+                    continuation.onTermination = { _ in task.cancel() }
                 }
 
                 return ServerHTTPResponse(
@@ -90,7 +87,9 @@ public enum StreamableHTTPRoutes {
 
         router.register(.GET, path) { _ in
             await activity?.touch()
-            let (subscriberId, subscription) = await backend.subscribe()
+            // GET carries only server-initiated / unsolicited messages
+            // (per-request responses flow back on their own POST stream).
+            let (subscriberId, subscription) = await backend.events()
             let body = AsyncThrowingStream<Data, Error> { continuation in
                 // SSE comment chunk to flush headers (see POST handler).
                 continuation.yield(Data(": stream-open\n\n".utf8))
@@ -106,9 +105,15 @@ public enum StreamableHTTPRoutes {
                         continuation.finish(throwing: error)
                     }
                 }
+                // Periodic keepalive so an abandoned stream is detected: once
+                // the peer is gone the write fails, the body stream ends, and
+                // this subscription is released instead of parking forever
+                // (which would leak the connection into CLOSE_WAIT).
+                let heartbeat = Self.heartbeat(continuation)
                 continuation.onTermination = { _ in
                     task.cancel()
-                    Task { await backend.unsubscribe(subscriberId) }
+                    heartbeat.cancel()
+                    Task { await backend.stopEvents(subscriberId) }
                 }
             }
             return ServerHTTPResponse(
@@ -122,12 +127,19 @@ public enum StreamableHTTPRoutes {
         }
     }
 
-    /// True if `message` is the final reply to `request`: either a
-    /// JSON-RPC response or error carrying the same id.
-    private static func isReplyTo(request: JSONRPCRequest, message: JSONRPCMessage) -> Bool {
-        if case .response(let response) = message, response.id == request.id {
-            return true
+    /// Emit an SSE keepalive comment on `continuation` every 15s. Shared by
+    /// the long-lived GET event streams in both transports so an abandoned
+    /// connection is noticed (the write fails once the peer is gone) rather
+    /// than leaking a parked subscription and its file descriptor.
+    static func heartbeat(
+        _ continuation: AsyncThrowingStream<Data, Error>.Continuation
+    ) -> Task<Void, Never> {
+        Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                if Task.isCancelled { break }
+                continuation.yield(Data(": keepalive\n\n".utf8))
+            }
         }
-        return false
     }
 }

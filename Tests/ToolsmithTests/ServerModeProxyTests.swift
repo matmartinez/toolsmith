@@ -5,6 +5,23 @@ import Testing
 
 @testable import Toolsmith
 
+/// Echoes each request's method back in the result, replying with the
+/// id it was given. `-u` keeps stdio unbuffered.
+private let kProxyResponder = """
+import sys, json
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except Exception:
+        continue
+    if isinstance(msg, dict) and 'id' in msg and 'method' in msg:
+        print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'],
+                          'result': {'echoed': msg.get('method')}}), flush=True)
+"""
+
 @Suite("ServerModeProxy")
 struct ServerModeProxyTests {
     @Test("No servers throws noServers")
@@ -74,13 +91,14 @@ struct ServerModeProxyTests {
 
     @Test("Traffic to one named server doesn't leak into another's stream")
     func isolation() async throws {
-        let cat = URL(fileURLWithPath: "/bin/cat")
+        let env = URL(fileURLWithPath: "/usr/bin/env")
+        let responderArgs = ["python3", "-u", "-c", kProxyResponder]
         let proxy = try ServerModeProxy(
             host: "127.0.0.1",
             port: 0,
             servers: [
-                .init(name: "alpha", executable: cat),
-                .init(name: "beta", executable: cat),
+                .init(name: "alpha", executable: env, args: responderArgs),
+                .init(name: "beta", executable: env, args: responderArgs),
             ]
         )
         let address = try await proxy.start()
@@ -101,19 +119,19 @@ struct ServerModeProxyTests {
             if let event = betaParser.feed(line: line), event.event == "endpoint" { break }
         }
 
-        // POST a request to alpha; beta should NOT see it.
-        let request = JSONRPCMessage.request(JSONRPCRequest(id: 99, method: "ping-alpha"))
-        let body = try WireJSON.encoder().encode(request)
+        // POST a request to alpha; its reply belongs on alpha's stream, so
+        // beta must NOT see it.
+        let alphaRequest = JSONRPCMessage.request(JSONRPCRequest(id: 99, method: "ping-alpha"))
         _ = try await httpClient.send(
             HTTPRequest(
                 method: "POST",
                 url: base.appendingPathComponent("servers/alpha/messages"),
                 headers: [("Content-Type", "application/json")],
-                body: body
+                body: try WireJSON.encoder().encode(alphaRequest)
             )
         )
 
-        // POST a different request to beta; beta should see THIS one.
+        // POST a different request to beta; beta's reply should surface here.
         let betaRequest = JSONRPCMessage.request(JSONRPCRequest(id: 100, method: "ping-beta"))
         _ = try await httpClient.send(
             HTTPRequest(
@@ -132,7 +150,14 @@ struct ServerModeProxyTests {
                 betaMessages.append(decoded)
             }
         }
-        #expect(betaMessages == [betaRequest])
+        // The only message on beta's stream is beta's own response — alpha's
+        // never leaks across.
+        guard case .response(let response) = betaMessages.first else {
+            Issue.record("expected a response on beta's stream, got \(String(describing: betaMessages.first))")
+            return
+        }
+        #expect(response.id == .number(100))
+        #expect(response.result == .object(["echoed": .string("ping-beta")]))
     }
 }
 

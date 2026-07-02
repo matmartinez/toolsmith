@@ -20,6 +20,15 @@ for line in sys.stdin:
     except Exception:
         continue
     if isinstance(msg, dict) and 'id' in msg and 'method' in msg:
+        # For 'emit-note', first emit an unsolicited (server-initiated)
+        # notification — it carries no request id, so it belongs on the
+        # GET event stream, not the POST reply.
+        if msg.get('method') == 'emit-note':
+            print(json.dumps({
+                'jsonrpc': '2.0',
+                'method': 'notifications/message',
+                'params': {'hello': 'world'},
+            }), flush=True)
         resp = {
             'jsonrpc': '2.0',
             'id': msg['id'],
@@ -185,10 +194,11 @@ struct StreamableHTTPRoutesTests {
         #expect(streamResponse.statusCode == 200)
         #expect(streamResponse.headers["Content-Type"]?.contains("text/event-stream") == true)
 
-        // Then POST a request — its response should also flow through this stream
-        // (broadcast model). We collect a single message and stop.
+        // Then POST a request that makes the child emit an unsolicited
+        // notification. Per-request responses now flow back on the POST's
+        // own stream; only server-initiated messages reach this GET stream.
         let body = try WireJSON.encoder().encode(
-            JSONRPCMessage.request(JSONRPCRequest(id: 99, method: "pong"))
+            JSONRPCMessage.request(JSONRPCRequest(id: 99, method: "emit-note"))
         )
         _ = try await httpClient.send(
             HTTPRequest(
@@ -207,10 +217,10 @@ struct StreamableHTTPRoutesTests {
                 break
             }
         }
-        guard case .response(let response) = collected else {
-            Issue.record("expected response on GET stream, got \(String(describing: collected))")
+        guard case .notification(let notification) = collected else {
+            Issue.record("expected server-initiated notification on GET stream, got \(String(describing: collected))")
             return
         }
-        #expect(response.id == .number(99))
+        #expect(notification.method == "notifications/message")
     }
 }

@@ -8,7 +8,7 @@ import Foundation
 public actor CLIBackend: MCPServerBackend {
     private let exposure: CLIExposureConfig
     private let serverInfo: MCPImplementation
-    private var subscribers: [UUID: AsyncThrowingStream<JSONRPCMessage, Error>.Continuation] = [:]
+    private var eventSubscribers: [UUID: AsyncThrowingStream<JSONRPCMessage, Error>.Continuation] = [:]
     private var cachedTemplateMatchers: [(URITemplateMatcher, CLIResourceTemplateSpec)]?
 
     public init(
@@ -24,32 +24,42 @@ public actor CLIBackend: MCPServerBackend {
     public func start() async throws { /* nothing to spawn */ }
 
     public func stop() async {
-        for (_, continuation) in subscribers { continuation.finish() }
-        subscribers.removeAll()
+        for (_, continuation) in eventSubscribers { continuation.finish() }
+        eventSubscribers.removeAll()
     }
 
-    public func subscribe() -> (id: UUID, stream: AsyncThrowingStream<JSONRPCMessage, Error>) {
+    /// Dispatch the request in-process and yield exactly one response.
+    /// No id remapping needed — each call is handled synchronously and
+    /// independently, so there is no cross-request state to collide.
+    public func request(_ request: JSONRPCRequest) -> AsyncThrowingStream<JSONRPCMessage, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                let response = await self.dispatch(request)
+                continuation.yield(.response(response))
+                continuation.finish()
+            }
+        }
+    }
+
+    /// CLI exposures have no upstream to notify; notifications are dropped.
+    public func notify(_ notification: JSONRPCNotification) async throws {}
+
+    public func events() -> (id: UUID, stream: AsyncThrowingStream<JSONRPCMessage, Error>) {
         let id = UUID()
         let (stream, continuation) = AsyncThrowingStream<JSONRPCMessage, Error>.makeStream()
-        subscribers[id] = continuation
+        eventSubscribers[id] = continuation
         return (id, stream)
     }
 
-    public func unsubscribe(_ id: UUID) {
-        subscribers.removeValue(forKey: id)?.finish()
+    public func stopEvents(_ id: UUID) {
+        eventSubscribers.removeValue(forKey: id)?.finish()
     }
 
-    public func send(_ message: JSONRPCMessage) async throws {
-        guard case .request(let request) = message else { return }
-        let response = await dispatch(request)
-        broadcast(.response(response))
+    public func emitToEvents(_ message: JSONRPCMessage) {
+        for (_, continuation) in eventSubscribers { continuation.yield(message) }
     }
 
     // MARK: - Dispatch
-
-    private func broadcast(_ message: JSONRPCMessage) {
-        for (_, continuation) in subscribers { continuation.yield(message) }
-    }
 
     private func dispatch(_ request: JSONRPCRequest) async -> JSONRPCResponse {
         switch request.method {
