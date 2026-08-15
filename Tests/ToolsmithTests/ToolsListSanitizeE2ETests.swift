@@ -150,7 +150,11 @@ struct ToolsListSanitizeE2ETests {
             return
         }
         #expect(!text.contains(#"\s"#))
-        #expect(text.contains(#" \t\r\n\f\v"#))
+        #expect(text.contains(#" \t\r\n\x0C\x0B"#))
+        // R9: form-feed / vertical-tab MUST be \x0C / \x0B, never \f / \v —
+        // llama.cpp's GBNF parser rejects \f and \v.
+        #expect(!text.contains(#"\f"#))
+        #expect(!text.contains(#"\v"#))
     }
 
     @Test("With sanitizing disabled the pattern passes through verbatim")

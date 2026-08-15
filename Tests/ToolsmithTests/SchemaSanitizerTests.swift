@@ -25,15 +25,28 @@ struct SchemaSanitizerPatternTests {
     // FAIL rows containing only \s are rewritten (expandable, not dropped).
     @Test(#"\s inside a class is spliced"#)
     func sInClass() {
-        #expect(SchemaSanitizer.sanitizePattern(#"^[^\s]+$"#) == .rewritten(#"^[^ \t\r\n\f\v]+$"#))
-        #expect(SchemaSanitizer.sanitizePattern(#"^[^\s@]+$"#) == .rewritten(#"^[^ \t\r\n\f\v@]+$"#))
+        #expect(SchemaSanitizer.sanitizePattern(#"^[^\s]+$"#) == .rewritten(#"^[^ \t\r\n\x0C\x0B]+$"#))
+        #expect(SchemaSanitizer.sanitizePattern(#"^[^\s@]+$"#) == .rewritten(#"^[^ \t\r\n\x0C\x0B@]+$"#))
     }
 
     @Test("Real-world calendar email pattern is rewritten")
     func calendarEmail() {
         let input = #"^[^\s@]+@[^\s@]+\.[^\s@]+$"#
-        let expected = #"^[^ \t\r\n\f\v@]+@[^ \t\r\n\f\v@]+\.[^ \t\r\n\f\v@]+$"#
+        let expected = #"^[^ \t\r\n\x0C\x0B@]+@[^ \t\r\n\x0C\x0B@]+\.[^ \t\r\n\x0C\x0B@]+$"#
         #expect(SchemaSanitizer.sanitizePattern(input) == .rewritten(expected))
+    }
+
+    // R9: the expansion must use GBNF-supported escapes only. llama.cpp
+    // (b10360) rejects \f and \v, so \s must expand with \x0C / \x0B.
+    @Test(#"\s expansion uses \x0C/\x0B, never \f/\v (R9)"#)
+    func r9EscapeChoice() {
+        guard case .rewritten(let text) = SchemaSanitizer.sanitizePattern(#"^[^\s]+$"#) else {
+            Issue.record("expected rewrite"); return
+        }
+        #expect(text.contains(#"\x0C"#))
+        #expect(text.contains(#"\x0B"#))
+        #expect(!text.contains(#"\f"#))
+        #expect(!text.contains(#"\v"#))
     }
 
     // FAIL rows containing \S — no safe positive expansion → drop.
@@ -129,7 +142,7 @@ struct SchemaSanitizerWalkTests {
               case .object(let first) = any.first
         else { Issue.record("unexpected shape"); return }
         #expect(id["pattern"] == .string("[A-Za-z0-9_]+"))
-        #expect(first["pattern"] == .string(#"^[^ \t\r\n\f\v]+$"#))
+        #expect(first["pattern"] == .string(#"^[^ \t\r\n\x0C\x0B]+$"#))
     }
 
     @Test("A property literally named 'pattern' is not treated as a keyword")
@@ -184,7 +197,7 @@ struct SchemaSanitizerToolsListTests {
         else { Issue.record("unexpected shape"); return }
         #expect(o["nextCursor"] == .string("page2"))
         #expect(goodA["pattern"] == .string("^[a-z]+$"))
-        #expect(email["pattern"] == .string(#"^[^ \t\r\n\f\v@]+$"#))
+        #expect(email["pattern"] == .string(#"^[^ \t\r\n\x0C\x0B@]+$"#))
     }
 
     @Test("A result with no tools array is returned untouched")

@@ -186,7 +186,7 @@ struct ClientModeProxyTests {
 
         let line = try readLine(from: readOut)
         let decoded = try WireJSON.decoder().decode(JSONRPCMessage.self, from: Data(line.utf8))
-        #expect(emailPattern(in: decoded) == .string(#"^[^ \t\r\n\f\v@]+$"#))
+        #expect(emailPattern(in: decoded) == .string(#"^[^ \t\r\n\x0C\x0B@]+$"#))
     }
 
     @Test("A non-tools/list response passes through untouched")

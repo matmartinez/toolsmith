@@ -173,7 +173,11 @@ public enum SchemaSanitizer {
     /// characters each), so the rewrite stays a valid regex and is idempotent.
     private static func expansion(for shorthand: Character) -> String? {
         switch shorthand {
-        case "s": return #" \t\r\n\f\v"#
+        // Form-feed and vertical-tab MUST be written as \x0C / \x0B, not
+        // \f / \v: llama.cpp's GBNF parser (b10360) rejects \f and \v, so
+        // expanding to those would trade one unparseable escape for two and
+        // still 400 the request while looking sanitized (R9).
+        case "s": return #" \t\r\n\x0C\x0B"#
         case "d": return "0-9"
         case "w": return "A-Za-z0-9_"
         default: return nil
