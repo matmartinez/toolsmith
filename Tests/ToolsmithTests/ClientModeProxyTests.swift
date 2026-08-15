@@ -143,6 +143,89 @@ struct ClientModeProxyTests {
         }
         #expect(decoded == [progress, final])
     }
+
+    // MARK: - Schema sanitizing
+
+    private static let offendingListResult: JSONValue = [
+        "tools": [
+            ["name": "cal",
+             "inputSchema": ["type": "object",
+                             "properties": ["email": ["type": "string", "pattern": #"^[^\s@]+$"#]]]],
+        ],
+    ]
+
+    private func emailPattern(in message: JSONRPCMessage) -> JSONValue? {
+        guard case .response(let r) = message,
+              case .object(let result)? = r.result,
+              case .array(let tools) = result["tools"],
+              case .object(let tool) = tools.first,
+              case .object(let schema) = tool["inputSchema"],
+              case .object(let props) = schema["properties"],
+              case .object(let email) = props["email"]
+        else { return nil }
+        return email["pattern"]
+    }
+
+    @Test("Sanitizes a tools/list response flowing back to stdout")
+    func sanitizesToolsListResponse() async throws {
+        let mock = MockClientTransport()
+        let (local, writeIn, readOut) = makeStdio()
+
+        // Client asks for tools/list; the proxy must record id→method before
+        // the response can be correlated.
+        try writeLine(.request(JSONRPCRequest(id: 1, method: mcpListToolsMethod)), to: writeIn)
+
+        let proxyTask = Task { try await ClientModeProxy.run(local: local, remote: mock) }
+        // Once the request reaches the remote, the id→method record is in place
+        // (record runs before send), so pushing the reply now is race-free.
+        while await mock.sentMessages.isEmpty { await Task.yield() }
+        await mock.push(.response(JSONRPCResponse(id: 1, result: Self.offendingListResult)))
+        await mock.finish()
+        try writeIn.close()
+        try await proxyTask.value
+
+        let line = try readLine(from: readOut)
+        let decoded = try WireJSON.decoder().decode(JSONRPCMessage.self, from: Data(line.utf8))
+        #expect(emailPattern(in: decoded) == .string(#"^[^ \t\r\n\f\v@]+$"#))
+    }
+
+    @Test("A non-tools/list response passes through untouched")
+    func nonToolsListUntouched() async throws {
+        let mock = MockClientTransport()
+        let (local, writeIn, readOut) = makeStdio()
+
+        // Same structural payload, but the request method is not tools/list.
+        try writeLine(.request(JSONRPCRequest(id: 2, method: "ping")), to: writeIn)
+
+        let proxyTask = Task { try await ClientModeProxy.run(local: local, remote: mock) }
+        while await mock.sentMessages.isEmpty { await Task.yield() }
+        let response = JSONRPCMessage.response(JSONRPCResponse(id: 2, result: Self.offendingListResult))
+        await mock.push(response)
+        await mock.finish()
+        try writeIn.close()
+        try await proxyTask.value
+
+        let line = try readLine(from: readOut)
+        let decoded = try WireJSON.decoder().decode(JSONRPCMessage.self, from: Data(line.utf8))
+        #expect(decoded == response)
+    }
+
+    @Test("--no-sanitize-schemas passes the offending pattern through verbatim")
+    func sanitizeDisabled() async throws {
+        let mock = MockClientTransport()
+        let (local, writeIn, readOut) = makeStdio()
+
+        let response = JSONRPCMessage.response(JSONRPCResponse(id: 1, result: Self.offendingListResult))
+        await mock.push(response)
+        await mock.finish()
+        try writeIn.close()
+
+        try await ClientModeProxy.run(local: local, remote: mock, sanitizeSchemas: false)
+
+        let line = try readLine(from: readOut)
+        let decoded = try WireJSON.decoder().decode(JSONRPCMessage.self, from: Data(line.utf8))
+        #expect(emailPattern(in: decoded) == .string(#"^[^\s@]+$"#))
+    }
 }
 
 @Suite("Toolsmith header parsing")

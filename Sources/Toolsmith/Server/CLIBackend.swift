@@ -8,15 +8,18 @@ import Foundation
 public actor CLIBackend: MCPServerBackend {
     private let exposure: CLIExposureConfig
     private let serverInfo: MCPImplementation
+    private let sanitizeSchemas: Bool
     private var eventSubscribers: [UUID: AsyncThrowingStream<JSONRPCMessage, Error>.Continuation] = [:]
     private var cachedTemplateMatchers: [(URITemplateMatcher, CLIResourceTemplateSpec)]?
 
     public init(
         exposure: CLIExposureConfig,
-        serverInfo: MCPImplementation = MCPImplementation(name: "toolsmith-cli", version: "0.0.0")
+        serverInfo: MCPImplementation = MCPImplementation(name: "toolsmith-cli", version: "0.0.0"),
+        sanitizeSchemas: Bool = true
     ) {
         self.exposure = exposure
         self.serverInfo = serverInfo
+        self.sanitizeSchemas = sanitizeSchemas
     }
 
     // MARK: - MCPServerBackend
@@ -109,7 +112,18 @@ public actor CLIBackend: MCPServerBackend {
             )
         }
         let result = MCPListToolsResult(tools: tools)
-        return JSONRPCResponse(id: id, result: Self.encodeAsJSONValue(result) ?? .null)
+        let encoded = Self.encodeAsJSONValue(result) ?? .null
+        guard sanitizeSchemas else {
+            return JSONRPCResponse(id: id, result: encoded)
+        }
+        let (sanitized, mods) = SchemaSanitizer.sanitizeToolsListResult(encoded)
+        if !mods.isEmpty {
+            for mod in mods {
+                Logger.shared.debug("schema-sanitize: tool=\(mod.tool) path=\(mod.path) action=\(mod.action) original=\(mod.original)")
+            }
+            Logger.shared.info("schema-sanitize: tools/list — \(mods.count) pattern(s) rewritten/dropped")
+        }
+        return JSONRPCResponse(id: id, result: sanitized)
     }
 
     private func callToolResponse(id: JSONRPCID, params: JSONValue?) async -> JSONRPCResponse {

@@ -38,6 +38,9 @@ public actor ChildSession {
     private let workingDirectory: FilePath?
     private let clientInfo: MCPImplementation
     private let requestTimeout: Duration
+    /// When true, `tools/list` responses have GBNF-hostile schema patterns
+    /// rewritten/dropped on the way out (see `SchemaSanitizer`).
+    private let sanitizeSchemas: Bool
 
     private var runTask: Task<Void, Never>?
     private var handshakeTask: Task<Void, Never>?
@@ -63,6 +66,7 @@ public actor ChildSession {
     /// rewritten back to it.
     private struct PendingRequest {
         let originalId: JSONRPCID
+        let method: String
         let continuation: AsyncThrowingStream<JSONRPCMessage, Error>.Continuation
     }
     private var pendingRequests: [Int64: PendingRequest] = [:]
@@ -92,8 +96,10 @@ public actor ChildSession {
         env: [String: String]? = nil,
         cwd: URL? = nil,
         clientInfo: MCPImplementation = MCPImplementation(name: "toolsmith", version: "0.0.0"),
-        requestTimeout: Duration = .seconds(60)
+        requestTimeout: Duration = .seconds(60),
+        sanitizeSchemas: Bool = true
     ) {
+        self.sanitizeSchemas = sanitizeSchemas
         self.executablePath = executable.path
         self.arguments = args
         if let env {
@@ -284,7 +290,7 @@ public actor ChildSession {
         }
 
         let upstreamId = allocateUpstreamId()
-        pendingRequests[upstreamId] = PendingRequest(originalId: request.id, continuation: continuation)
+        pendingRequests[upstreamId] = PendingRequest(originalId: request.id, method: request.method, continuation: continuation)
         if let token = MCPProgressTokenExtractor.token(in: request.params) {
             progressRoutes[token] = upstreamId
         }
@@ -330,7 +336,8 @@ public actor ChildSession {
             if let pending = pendingRequests.removeValue(forKey: upstreamId) {
                 cancelTimeout(upstreamId)
                 clearRoutes(for: upstreamId)
-                pending.continuation.yield(.response(rewrite(response, to: pending.originalId)))
+                let delivered = sanitizeIfToolsList(response, method: pending.method)
+                pending.continuation.yield(.response(rewrite(delivered, to: pending.originalId)))
                 pending.continuation.finish()
                 return
             }
@@ -452,6 +459,28 @@ public actor ChildSession {
 
     private func fanoutEvents(_ message: JSONRPCMessage) {
         for (_, continuation) in eventSubscribers { continuation.yield(message) }
+    }
+
+    /// When schema sanitizing is enabled and this response answers a
+    /// `tools/list`, rewrite GBNF-hostile `pattern` constructs in each tool's
+    /// `inputSchema` before it leaves the proxy. Any other response passes
+    /// through untouched.
+    private func sanitizeIfToolsList(_ response: JSONRPCResponse, method: String) -> JSONRPCResponse {
+        guard sanitizeSchemas, method == mcpListToolsMethod, let result = response.result else {
+            return response
+        }
+        let (sanitized, mods) = SchemaSanitizer.sanitizeToolsListResult(result)
+        guard !mods.isEmpty else { return response }
+        for mod in mods {
+            switch mod.action {
+            case .rewritten(let replacement):
+                Logger.shared.debug("schema-sanitize: tool=\(mod.tool) path=\(mod.path) rewrote \(mod.original) -> \(replacement)")
+            case .dropped:
+                Logger.shared.debug("schema-sanitize: tool=\(mod.tool) path=\(mod.path) dropped pattern \(mod.original)")
+            }
+        }
+        Logger.shared.info("schema-sanitize: tools/list — \(mods.count) pattern(s) rewritten/dropped")
+        return JSONRPCResponse(id: response.id, result: sanitized)
     }
 
     /// Rebuild a response under the caller's original id.

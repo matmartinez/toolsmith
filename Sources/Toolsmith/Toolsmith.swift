@@ -47,6 +47,12 @@ struct Toolsmith: AsyncParsableCommand {
     @Flag(name: .customLong("no-verify-ssl"), help: "Disable TLS certificate verification.")
     var noVerifySsl: Bool = false
 
+    @Flag(
+        name: .customLong("no-sanitize-schemas"),
+        help: "Disable rewriting GBNF-hostile regex patterns in tools/list schemas (on by default)."
+    )
+    var noSanitizeSchemas: Bool = false
+
     // MARK: Stdio/spawn options
 
     @Option(
@@ -211,7 +217,7 @@ struct Toolsmith: AsyncParsableCommand {
             }
             Logger.shared.info("setting up server '\(label)': \(summary)")
         }
-        let proxy = try ServerModeProxy(host: host, port: port, servers: specs, cors: cors)
+        let proxy = try ServerModeProxy(host: host, port: port, servers: specs, cors: cors, sanitizeSchemas: !noSanitizeSchemas)
         let address = try await proxy.start()
         Logger.shared.info("listening on http://\(host):\(address.port ?? port)")
 
@@ -322,7 +328,7 @@ struct Toolsmith: AsyncParsableCommand {
             input: FileHandle.standardInput,
             output: FileHandle.standardOutput
         )
-        try await ClientModeProxy.run(local: local, remote: remote)
+        try await ClientModeProxy.run(local: local, remote: remote, sanitizeSchemas: !noSanitizeSchemas)
         Logger.shared.info("client mode finished")
     }
 

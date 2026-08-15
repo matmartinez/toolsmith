@@ -50,6 +50,8 @@ public actor ServerModeProxy {
     public let servers: [NamedServer]
     public let version: String
     public let cors: CORSConfig?
+    /// Rewrite GBNF-hostile schema patterns in `tools/list` (on by default).
+    public let sanitizeSchemas: Bool
 
     private var backends: [any MCPServerBackend] = []
     private var httpServer: HTTPServer?
@@ -60,7 +62,8 @@ public actor ServerModeProxy {
         port: Int,
         servers: [NamedServer],
         version: String = "0.0.0",
-        cors: CORSConfig? = nil
+        cors: CORSConfig? = nil,
+        sanitizeSchemas: Bool = true
     ) throws {
         guard !servers.isEmpty else { throw Failure.noServers }
         var seen = Set<String>()
@@ -74,6 +77,7 @@ public actor ServerModeProxy {
         self.servers = servers
         self.version = version
         self.cors = cors
+        self.sanitizeSchemas = sanitizeSchemas
     }
 
     /// Construct every backend, register its routes, and bind the HTTP
@@ -84,14 +88,16 @@ public actor ServerModeProxy {
             let backend: any MCPServerBackend
             switch spec.backend {
             case let .stdioChild(executable, args, env, cwd):
-                backend = ChildSession(executable: executable, args: args, env: env, cwd: cwd)
+                backend = ChildSession(executable: executable, args: args, env: env, cwd: cwd,
+                                       sanitizeSchemas: sanitizeSchemas)
             case let .cliExposure(config):
                 backend = CLIBackend(
                     exposure: config,
                     serverInfo: MCPImplementation(
                         name: spec.name.isEmpty ? "toolsmith-cli" : spec.name,
                         version: version
-                    )
+                    ),
+                    sanitizeSchemas: sanitizeSchemas
                 )
             }
             try await backend.start()
