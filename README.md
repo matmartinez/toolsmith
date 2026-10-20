@@ -155,6 +155,11 @@ either text or base64 blob per the `output` field.
 }
 ```
 
+> **Note:** the `file-text://` / `file-bytes://` templates above hand an
+> arbitrary client-supplied path to `cat`, so any connected client can
+> read any file the process can. They're a demo — don't expose this
+> config on a non-loopback `--host`.
+
 The `resources` capability is advertised on `initialize` only when at
 least one resource or template is declared. `resources/subscribe`,
 list-changed notifications, and RFC 6570 template operators are not

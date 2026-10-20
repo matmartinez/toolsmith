@@ -21,8 +21,8 @@ swift test --filter ArgvSpecTests/testRoundTrip     # one test method
 ```
 
 There is no separate lint step. Targets: the `Toolsmith` executable and the
-`ToolsmithTests` test target (XCTest). Dependencies are swift-argument-parser and
-swift-nio (NIO/NIOHTTP1) — see `Package.swift`.
+`ToolsmithTests` test target (swift-testing). Dependencies are swift-argument-parser,
+swift-nio (NIO/NIOHTTP1), and swift-subprocess — see `Package.swift`.
 
 ## Two modes, one binary
 

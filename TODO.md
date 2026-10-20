@@ -53,4 +53,4 @@ A staged plan for porting [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk
 ## Notes
 
 - Upstream is the source-of-truth for flag names, defaults, env-var fallbacks, and wire-level behavior. When in doubt, read `sparfenyuk/mcp-proxy`.
-- We deviate from upstream on `--header` / `--env` / `--named-server` (delimited single value per occurrence instead of two tokens) because swift-argument-parser has no `nargs=2` strategy. Documented in commit `5910c77`.
+- We deviate from upstream on `--header` / `--env` / `--named-server` (delimited single value per occurrence instead of two tokens) because swift-argument-parser has no `nargs=2` strategy. Documented in commit `9175141`.
