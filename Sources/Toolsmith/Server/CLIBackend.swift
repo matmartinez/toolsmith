@@ -14,7 +14,7 @@ public actor CLIBackend: MCPServerBackend {
 
     public init(
         exposure: CLIExposureConfig,
-        serverInfo: MCPImplementation = MCPImplementation(name: "toolsmith-cli", version: "0.0.0"),
+        serverInfo: MCPImplementation = MCPImplementation(name: "toolsmith-cli", version: ToolsmithVersion.current),
         sanitizeSchemas: Bool = true
     ) {
         self.exposure = exposure

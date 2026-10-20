@@ -61,7 +61,7 @@ public actor ServerModeProxy {
         host: String,
         port: Int,
         servers: [NamedServer],
-        version: String = "0.0.0",
+        version: String = ToolsmithVersion.current,
         cors: CORSConfig? = nil,
         sanitizeSchemas: Bool = true
     ) throws {

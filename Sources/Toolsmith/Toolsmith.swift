@@ -9,7 +9,7 @@ struct Toolsmith: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "toolsmith",
         abstract: "Bridge MCP transports (stdio ↔ SSE/StreamableHTTP).",
-        version: "0.0.0"
+        version: ToolsmithVersion.current
     )
 
     // MARK: Positional

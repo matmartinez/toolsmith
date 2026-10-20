@@ -170,6 +170,15 @@ parent process's environment — host CLIs almost always need `PATH`,
 `HOME`, etc. to function. Use `env` for overrides and additions; the
 caller's environment flows through automatically.
 
+## Install
+
+```sh
+brew install matmartinez/tools/toolsmith
+```
+
+Requires macOS 14 or later. The sample configs land in
+`$(brew --prefix)/share/toolsmith/samples`.
+
 ## Build / Run / Test
 
 ```sh

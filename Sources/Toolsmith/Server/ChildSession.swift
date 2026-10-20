@@ -95,7 +95,7 @@ public actor ChildSession {
         args: [String] = [],
         env: [String: String]? = nil,
         cwd: URL? = nil,
-        clientInfo: MCPImplementation = MCPImplementation(name: "toolsmith", version: "0.0.0"),
+        clientInfo: MCPImplementation = MCPImplementation(name: "toolsmith", version: ToolsmithVersion.current),
         requestTimeout: Duration = .seconds(60),
         sanitizeSchemas: Bool = true
     ) {
